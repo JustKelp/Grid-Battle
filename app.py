@@ -86,7 +86,8 @@ if '--clear-cache' in sys.argv:
     sys.exit(0)
 
 ensure_cache_dir()
-
+# Clear NHL cache to rebuild with new API approach
+clear_cache('nhl')
 
 # ── CONSTANTS ──────────────────────────────────────────────────────────────
 NFL_TEAMS = [
@@ -628,51 +629,6 @@ def build_player_db():
                 continue
 
     except Exception: pass
-
-    # ── SNAP COUNTS (preferred metric — downs played) ────────────────────────
-    # nflreadpy snap counts available from 2012+; replaces roster-week proxy
-    try:
-        snap_df = nfl.load_snap_counts(seasons=list(range(2012, 2026)))
-        if hasattr(snap_df, 'to_pandas'):
-            snap_df = snap_df.to_pandas()
-
-        # Build per-player snap totals by team
-        snap_totals = {}  # {name: {team: total_snaps}}
-        for _, row in snap_df.iterrows():
-            try:
-                pname = str(row.get("player", "")).strip()
-                if not pname:
-                    first_name = str(row.get("first_name", "")).strip()
-                    last_name = str(row.get("last_name", "")).strip()
-                    pname = f"{first_name} {last_name}".strip()
-                name = sanitize_name(_normalise_player_name(pname, NFL_PLAYER_ALIASES))
-                team = normalise_team(str(row.get("team", "")).strip())
-                if not name or not team or team not in NFL_TEAMS: continue
-
-                off = int(float(row.get("offense_snaps", 0) or 0))
-                dfn = int(float(row.get("defense_snaps", 0) or 0))
-                st  = int(float(row.get("st_snaps", 0) or 0))
-                total_snaps = off + dfn + st
-                if total_snaps < 1: continue
-
-                if name not in snap_totals: snap_totals[name] = {}
-                snap_totals[name][team] = snap_totals[name].get(team, 0) + total_snaps
-            except Exception: continue
-
-        # Replace weeks_by_team with snap totals for players that have snap data
-        replaced = 0
-        for name, team_snaps in snap_totals.items():
-            if name in players:
-                players[name]["weeks_by_team"] = team_snaps
-                # Also ensure teams list is up to date
-                for t in team_snaps:
-                    if t not in players[name]["teams"]:
-                        players[name]["teams"].append(t)
-                replaced += 1
-        print(f"    NFL snap counts loaded: {replaced} players updated with downs/snaps data")
-    except Exception as e:
-        print(f"    NFL snap counts not available ({e}), using roster-week proxy")
-
     # ── ESPN HEADSHOTS ───────────────────────────────────────────────────────
     # Fetch current NFL rosters from ESPN to get headshot URLs
     ESPN_NFL_API = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
@@ -1224,29 +1180,15 @@ def build_nba_player_db():
                     # skip aggregate multi-team rows (2TM, 3TM, 4TM, TOT)
                     if not raw_tm or raw_tm in ("TOT", "2TM", "3TM", "4TM", "5TM"): continue
                     abbr = normalise_nba_team(raw_tm)
-                    # Prefer minutes played (mp) for rarity granularity; fall back to games
-                    mp = float(_row.get("mp", 0) or 0)
                     gp = int(float(_row.get("g", 0) or 0))
-                    metric = int(mp) if mp > 0 else gp
-                    if not name or not abbr or abbr not in NBA_TEAMS or metric < 1: continue
+                    if not name or not abbr or abbr not in NBA_TEAMS or gp < 1: continue
                     if name not in players:
-                        pos_csv = str(_row.get("pos", "")).strip()
-                        season_csv = int(float(_row.get("season", 0) or 0))
                         players[name] = {"name": name, "teams": [], "games_by_team": {},
-                                         "headshot": "", "position": pos_csv, "jersey": "",
-                                         "debut_year": season_csv if season_csv > 0 else None}
-                    else:
-                        pos_csv = str(_row.get("pos", "")).strip()
-                        season_csv = int(float(_row.get("season", 0) or 0))
-                        if pos_csv and not players[name].get("position"):
-                            players[name]["position"] = pos_csv
-                        if season_csv > 0 and (
-                                not players[name].get("debut_year") or season_csv < players[name]["debut_year"]):
-                            players[name]["debut_year"] = season_csv
+                                         "headshot": "", "position": "", "jersey": ""}
                     if abbr not in players[name]["teams"]:
                         players[name]["teams"].append(abbr)
                     players[name]["games_by_team"][abbr] = \
-                        players[name]["games_by_team"].get(abbr, 0) + metric
+                        players[name]["games_by_team"].get(abbr, 0) + gp
                 except Exception:
                     continue
             print(f"    NBA CSV loaded: {len(players)} players")
@@ -1284,9 +1226,8 @@ def build_nba_player_db():
                                                      "headshot":hs,"position":pos,"jersey":jersey}
                                 if abbr not in players[name]["teams"]:
                                     players[name]["teams"].append(abbr)
-                                # Only add minutes estimate if no CSV data exists for this team
-                                if players[name]["games_by_team"].get(abbr, 0) == 0:
-                                    players[name]["games_by_team"][abbr] = 2000  # ~25 min/game × 80 games
+                                players[name]["games_by_team"][abbr] = \
+                                    players[name]["games_by_team"].get(abbr,0) + 82
                                 if hs and not players[name]["headshot"]:
                                     players[name]["headshot"] = hs
                                 if pos and not players[name]["position"]:
@@ -1335,46 +1276,98 @@ def build_nhl_player_db():
     players = {}
     print("  Building NHL DB...")
 
-
-    # Fetch from ESPN for current rosters
-    ESPN_NHL_API = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl"
+    # ── STEP 1: NHL Stats API — aggregate ALL seasons in one request ─────
+    # This gets every skater who ever played an NHL game with total GP + team abbrevs
     try:
-        url = f"{ESPN_NHL_API}/teams"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp = urllib.request.urlopen(req, timeout=15)
+        # Skaters — all seasons aggregated, unlimited results
+        skater_url = (
+            "https://api.nhle.com/stats/rest/en/skater/summary"
+            "?isAggregate=false&isGame=false"
+            "&sort=%5B%7B%22property%22%3A%22gamesPlayed%22%2C%22direction%22%3A%22DESC%22%7D%5D"
+            "&start=0&limit=-1"
+            "&factCayenneExp=gamesPlayed%3E%3D1"
+            "&cayenneExp=gameTypeId%3D2"
+        )
+        print("    Fetching all NHL skaters from stats API...")
+        req = urllib.request.Request(skater_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=120)
         data = _json.loads(resp.read())
-        for sport in data.get("sports", []):
-            for league in sport.get("leagues", []):
-                for team in league.get("teams", []):
-                    team_info = team.get("team", {})
-                    abbr = normalise_nhl_team(team_info.get("abbreviation", ""))
-                    if abbr not in NHL_TEAMS:
-                        continue
-                    try:
-                        roster_url = team_info.get("links", [{}])[0].get("href", "")
-                        if roster_url:
-                            roster_req = urllib.request.Request(roster_url, headers={"User-Agent": "Mozilla/5.0"})
-                            roster_resp = urllib.request.urlopen(roster_req, timeout=15)
-                            roster_data = _json.loads(roster_resp.read())
-                            for athlete in roster_data.get("athletes", []):
-                                name = sanitize_name(_normalise_player_name(str(athlete.get("fullName", "")).strip(), NHL_PLAYER_ALIASES))
-                                position = str(athlete.get("position", {}).get("abbreviation", "")).strip()
-                                jersey = str(athlete.get("jersey", "")).strip()
-                                headshot = athlete.get("headshot", {}).get("href", "")
-                                if not name: continue
-                                if name not in players:
-                                    players[name] = {"name": name, "teams": [], "games_by_team": {}, "headshot": headshot, "position": position, "jersey": jersey}
-                                if abbr not in players[name]["teams"]:
-                                    players[name]["teams"].append(abbr)
-                                players[name]["games_by_team"][abbr] = players[name]["games_by_team"].get(abbr, 0) + 82
-                                if jersey and not players[name]["jersey"]:
-                                    players[name]["jersey"] = jersey
-                    except Exception:
-                        continue
-    except Exception: pass
-    # ── Kaggle CSV — complete 1909-2011 historical coverage ───────────────
-    # Download from: kaggle.com/datasets/open-source-sports/professional-hockey-database
-    # Save Skating.csv as nhl_skating.csv and Master.csv as nhl_master.csv
+        skater_rows = data.get("data", [])
+        print(f"    Got {len(skater_rows)} skater season-rows from NHL API")
+
+        for row in skater_rows:
+            try:
+                name = sanitize_name(_normalise_player_name(
+                    str(row.get("skaterFullName", "")).strip(), NHL_PLAYER_ALIASES))
+                if not name: continue
+                raw_abbrevs = str(row.get("teamAbbrevs", ""))
+                team_abbrevs = [normalise_nhl_team(t.strip()) for t in raw_abbrevs.split(",")]
+                team_abbrevs = [t for t in team_abbrevs if t and t in NHL_TEAMS]
+                if not team_abbrevs: continue
+                pos = str(row.get("positionCode", "")).strip()
+                gp = int(row.get("gamesPlayed", 0) or 0)
+                if gp < 1: continue
+
+                if name not in players:
+                    players[name] = {"name": name, "teams": [], "games_by_team": {},
+                                     "headshot": "", "position": pos, "jersey": ""}
+                for abbr in team_abbrevs:
+                    if abbr not in players[name]["teams"]:
+                        players[name]["teams"].append(abbr)
+                    share = gp // len(team_abbrevs) if len(team_abbrevs) > 1 else gp
+                    players[name]["games_by_team"][abbr] = players[name]["games_by_team"].get(abbr, 0) + max(share, 1)
+                if pos and not players[name]["position"]:
+                    players[name]["position"] = pos
+            except Exception: continue
+        print(f"    NHL skaters loaded: {len(players)} unique players")
+    except Exception as e:
+        print(f"    NHL skater API error: {e}")
+
+    # Goalies — same approach
+    try:
+        goalie_url = (
+            "https://api.nhle.com/stats/rest/en/goalie/summary"
+            "?isAggregate=false&isGame=false"
+            "&sort=%5B%7B%22property%22%3A%22gamesPlayed%22%2C%22direction%22%3A%22DESC%22%7D%5D"
+            "&start=0&limit=-1"
+            "&factCayenneExp=gamesPlayed%3E%3D1"
+            "&cayenneExp=gameTypeId%3D2"
+        )
+        print("    Fetching all NHL goalies from stats API...")
+        req = urllib.request.Request(goalie_url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=120)
+        data = _json.loads(resp.read())
+        goalie_rows = data.get("data", [])
+        print(f"    Got {len(goalie_rows)} goalie season-rows from NHL API")
+
+        goalies_added = 0
+        for row in goalie_rows:
+            try:
+                name = sanitize_name(_normalise_player_name(
+                    str(row.get("goalieFullName", "")).strip(), NHL_PLAYER_ALIASES))
+                if not name: continue
+                raw_abbrevs = str(row.get("teamAbbrevs", ""))
+                team_abbrevs = [normalise_nhl_team(t.strip()) for t in raw_abbrevs.split(",")]
+                team_abbrevs = [t for t in team_abbrevs if t and t in NHL_TEAMS]
+                if not team_abbrevs: continue
+                gp = int(row.get("gamesPlayed", 0) or 0)
+                if gp < 1: continue
+
+                if name not in players:
+                    players[name] = {"name": name, "teams": [], "games_by_team": {},
+                                     "headshot": "", "position": "G", "jersey": ""}
+                    goalies_added += 1
+                for abbr in team_abbrevs:
+                    if abbr not in players[name]["teams"]:
+                        players[name]["teams"].append(abbr)
+                    share = gp // len(team_abbrevs) if len(team_abbrevs) > 1 else gp
+                    players[name]["games_by_team"][abbr] = players[name]["games_by_team"].get(abbr, 0) + max(share, 1)
+            except Exception: continue
+        print(f"    NHL goalies added: {goalies_added} new, {len(players)} total")
+    except Exception as e:
+        print(f"    NHL goalie API error: {e}")
+
+    # ── STEP 2: Kaggle CSV — historical fallback for pre-API era ─────────
     try:
         import pandas as _pd
         _master_csv = os.path.join(os.path.dirname(__file__), "nhl_master.csv")
@@ -1389,6 +1382,7 @@ def build_nhl_player_db():
                 if pid and first and last:
                     _id_to_name[pid] = sanitize_name(f"{first} {last}")
             _sdf = _pd.read_csv(_skating_csv)
+            csv_added = 0
             for _, _row in _sdf.iterrows():
                 try:
                     pid = str(_row.get("playerID", "")).strip()
@@ -1400,97 +1394,63 @@ def build_nhl_player_db():
                     if name not in players:
                         players[name] = {"name": name, "teams": [], "games_by_team": {},
                                          "headshot": "", "position": "", "jersey": ""}
+                        csv_added += 1
                     if abbr not in players[name]["teams"]:
                         players[name]["teams"].append(abbr)
-                    players[name]["games_by_team"][abbr] = \
-                        players[name]["games_by_team"].get(abbr, 0) + gp
-                except Exception:
-                    continue
-            print(f"    NHL CSV loaded: {len(players)} players from historical DB")
-        else:
-            print(
-                "    nhl CSV files not found — see kaggle.com/datasets/open-source-sports/professional-hockey-database")
+                    # Only add CSV data if we don't already have API data for this team
+                    if players[name]["games_by_team"].get(abbr, 0) == 0:
+                        players[name]["games_by_team"][abbr] = gp
+                except Exception: continue
+            print(f"    NHL CSV fallback: {csv_added} new players added, {len(players)} total")
     except Exception as e:
         print(f"    NHL CSV error: {e}")
 
-    for season_year in range(1917, 2026):
-        season_str = f"{season_year}{season_year + 1}"
-
-        # ── SKATERS ──────────────────────────────────────────────────────
-        for start in range(0, 50000, 1000):
-            try:
-                url = (
-                    f"https://api.nhle.com/stats/rest/en/skater/summary"
-                    f"?isAggregate=false&isGame=false"
-                    f"&sort=%5B%7B%22property%22%3A%22gamesPlayed%22%2C%22direction%22%3A%22DESC%22%7D%5D"
-                    f"&start={start}&limit=1000"
-                    f"&factCayenneExp=gamesPlayed%3E%3D1"
-                    f"&cayenneExp=gameTypeId%3D2%20and%20seasonId%3D{season_str}"
-                )
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=20)
-                data = _json.loads(resp.read())
-                data_list = data.get("data", [])
-                if not data_list:
-                    break
-                for player in data_list:
-                    name = sanitize_name(_normalise_player_name(
-                        str(player.get("skaterFullName", "")).strip(), NHL_PLAYER_ALIASES))
-                    raw_abbrevs = str(player.get("teamAbbrevs", ""))
-                    team_abbrevs = [normalise_nhl_team(t.strip()) for t in raw_abbrevs.split(",")]
-                    team_abbrevs = [t for t in team_abbrevs if t and t in NHL_TEAMS]
-                    pos = str(player.get("positionCode", ""))
-                    gp = int(player.get("gamesPlayed", 0) or 0)
-                    if not name or not team_abbrevs: continue
-                    if name not in players:
-                        players[name] = {"name": name, "teams": [], "games_by_team": {}, "headshot": "",
-                                         "position": pos, "jersey": ""}
-                    for abbr in team_abbrevs:
-                        if abbr not in players[name]["teams"]:
-                            players[name]["teams"].append(abbr)
-                        share = gp // len(team_abbrevs)
-                        players[name]["games_by_team"][abbr] = players[name]["games_by_team"].get(abbr, 0) + max(share,
-                                                                                                                 1)
-                    if pos: players[name]["position"] = pos
-            except Exception:
-                break
-
-        # ── GOALIES ──────────────────────────────────────────────────────
-        for start in range(0, 10000, 1000):
-            try:
-                url = (
-                    f"https://api.nhle.com/stats/rest/en/goalie/summary"
-                    f"?isAggregate=false&isGame=false"
-                    f"&sort=%5B%7B%22property%22%3A%22gamesPlayed%22%2C%22direction%22%3A%22DESC%22%7D%5D"
-                    f"&start={start}&limit=1000"
-                    f"&factCayenneExp=gamesPlayed%3E%3D1"
-                    f"&cayenneExp=gameTypeId%3D2%20and%20seasonId%3D{season_str}"
-                )
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                resp = urllib.request.urlopen(req, timeout=20)
-                data = _json.loads(resp.read())
-                data_list = data.get("data", [])
-                if not data_list:
-                    break
-                for player in data_list:
-                    name = sanitize_name(_normalise_player_name(
-                        str(player.get("goalieFullName", "")).strip(), NHL_PLAYER_ALIASES))
-                    raw_abbrevs = str(player.get("teamAbbrevs", ""))
-                    team_abbrevs = [normalise_nhl_team(t.strip()) for t in raw_abbrevs.split(",")]
-                    team_abbrevs = [t for t in team_abbrevs if t and t in NHL_TEAMS]
-                    gp = int(player.get("gamesPlayed", 0) or 0)
-                    if not name or not team_abbrevs: continue
-                    if name not in players:
-                        players[name] = {"name": name, "teams": [], "games_by_team": {}, "headshot": "",
-                                         "position": "G", "jersey": ""}
-                    for abbr in team_abbrevs:
-                        if abbr not in players[name]["teams"]:
-                            players[name]["teams"].append(abbr)
-                        share = gp // len(team_abbrevs)
-                        players[name]["games_by_team"][abbr] = players[name]["games_by_team"].get(abbr, 0) + max(share,
-                                                                                                                 1)
-            except Exception:
-                break
+    # ── STEP 3: ESPN for headshots + jerseys ─────────────────────────────
+    ESPN_NHL_API = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl"
+    try:
+        url = f"{ESPN_NHL_API}/teams"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        resp = urllib.request.urlopen(req, timeout=15)
+        data = _json.loads(resp.read())
+        espn_updates = 0
+        for sport in data.get("sports", []):
+            for league in sport.get("leagues", []):
+                for team in league.get("teams", []):
+                    team_info = team.get("team", {})
+                    abbr = normalise_nhl_team(team_info.get("abbreviation", ""))
+                    if abbr not in NHL_TEAMS: continue
+                    try:
+                        tid = team_info.get("id", "")
+                        roster_req = urllib.request.Request(
+                            f"{ESPN_NHL_API}/teams/{tid}/roster",
+                            headers={"User-Agent": "Mozilla/5.0"})
+                        roster_data = _json.loads(urllib.request.urlopen(roster_req, timeout=10).read())
+                        for athlete in roster_data.get("athletes", []):
+                            for item in (athlete.get("items") or [athlete]):
+                                name = sanitize_name(_normalise_player_name(
+                                    str(item.get("fullName", "")).strip(), NHL_PLAYER_ALIASES))
+                                if not name: continue
+                                hs = item.get("headshot", {}).get("href", "")
+                                pos = str(item.get("position", {}).get("abbreviation", "")).strip()
+                                jersey = str(item.get("jersey", "")).strip()
+                                if name in players:
+                                    if hs and not players[name]["headshot"]:
+                                        players[name]["headshot"] = hs; espn_updates += 1
+                                    if jersey and not players[name]["jersey"]:
+                                        players[name]["jersey"] = jersey
+                                    if pos and not players[name]["position"]:
+                                        players[name]["position"] = pos
+                                else:
+                                    # New player not in API (very rare)
+                                    players[name] = {"name": name, "teams": [abbr],
+                                                     "games_by_team": {abbr: 82},
+                                                     "headshot": hs, "position": pos, "jersey": jersey}
+                                    if abbr not in players[name]["teams"]:
+                                        players[name]["teams"].append(abbr)
+                    except Exception: continue
+        print(f"    ESPN headshots/jerseys updated for {espn_updates} players")
+    except Exception as e:
+        print(f"    ESPN NHL error: {e}")
 
     _build_nhl_achievements(players)
     for p in players.values(): p.setdefault("achievements", {})
@@ -1534,8 +1494,10 @@ def calc_rarity(player, team_a, team_b):
     weeks_a,weeks_b = player["weeks_by_team"].get(team_a,0),player["weeks_by_team"].get(team_b,0)
     total = _crossover_total(team_a,team_b)
     if total <= 0: return 0.5
+    n = sum(1 for p in PLAYERS_DB if team_a in p.get("teams",[]) and team_b in p.get("teams",[]))
+    if n <= 1: return 0.5
     proportion = (weeks_a + weeks_b) / total
-    return round(max(0.01, min(1.0, proportion * 8)), 4)
+    return round(max(0.01, min(1.0, math.tanh(proportion * n * 0.8))), 4)
 
 _MLB_CROSSOVER_CACHE = {}
 def _mlb_crossover_total(team_a, team_b):
@@ -1555,8 +1517,10 @@ def calc_mlb_rarity(player, team_a, team_b):
     games_a,games_b = player["games_by_team"].get(team_a,0),player["games_by_team"].get(team_b,0)
     total = _mlb_crossover_total(team_a,team_b)
     if total <= 0: return 0.5
+    n = sum(1 for p in MLB_PLAYERS_DB if team_a in p.get("teams",[]) and team_b in p.get("teams",[]))
+    if n <= 1: return 0.5
     proportion = (games_a + games_b) / total
-    return round(max(0.01, min(1.0, proportion * 8)), 4)
+    return round(max(0.01, min(1.0, math.tanh(proportion * n * 0.8))), 4)
 
 _NBA_CROSSOVER_CACHE = {}
 def _nba_crossover_total(team_a, team_b):
@@ -1577,12 +1541,16 @@ def calc_nba_rarity(player, team_a, team_b):
         g = player["games_by_team"].get(team_a, 0)
         total = sum(p["games_by_team"].get(team_a,0) for p in NBA_PLAYERS_DB if team_a in p.get("teams",[]))
         if total <= 0: return 0.5
-        return round(max(0.01, min(1.0, (g / total) * 8)), 4)
+        n = sum(1 for p in NBA_PLAYERS_DB if team_a in p.get("teams",[]))
+        if n <= 1: return 0.5
+        return round(max(0.01, min(1.0, math.tanh((g/total)*n*0.8))), 4)
     g_a,g_b = player["games_by_team"].get(team_a,0),player["games_by_team"].get(team_b,0)
     total = _nba_crossover_total(team_a,team_b)
     if total <= 0: return 0.5
+    n = sum(1 for p in NBA_PLAYERS_DB if team_a in p.get("teams",[]) and team_b in p.get("teams",[]))
+    if n <= 1: return 0.5
     proportion = (g_a + g_b) / total
-    return round(max(0.01, min(1.0, proportion * 8)), 4)
+    return round(max(0.01, min(1.0, math.tanh(proportion * n * 0.8))), 4)
 
 _NHL_CROSSOVER_CACHE = {}
 def _nhl_crossover_total(team_a, team_b):
@@ -1602,8 +1570,10 @@ def calc_nhl_rarity(player, team_a, team_b):
     g_a,g_b = player["games_by_team"].get(team_a,0),player["games_by_team"].get(team_b,0)
     total = _nhl_crossover_total(team_a,team_b)
     if total <= 0: return 0.5
+    n = sum(1 for p in NHL_PLAYERS_DB if team_a in p.get("teams",[]) and team_b in p.get("teams",[]))
+    if n <= 1: return 0.5
     proportion = (g_a + g_b) / total
-    return round(max(0.01, min(1.0, proportion * 8)), 4)
+    return round(max(0.01, min(1.0, math.tanh(proportion * n * 0.8))), 4)
 
 # ── BOARD GENERATION ────────────────────────────────────────────────────────
 WIN_LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
@@ -1700,12 +1670,11 @@ def _resolve_win(s, phrases):
     if s["game_over"]: return
     uid1,uid2,board = s["players"][1]["user_id"],s["players"][2]["user_id"],s["board"]
     lines_p1,lines_p2 = _get_active_lines(board,uid1),_get_active_lines(board,uid2)
-    full_turn = (s["turn_number"] % 2 == 0)
     if lines_p1 and lines_p2:
         dtt = s.get("double_ttt")
         if dtt is None:
             s["double_ttt"] = {"turns_held": 0, "turns_remaining": 5}
-        elif full_turn:
+        else:
             dtt["turns_held"] += 1
             dtt["turns_remaining"] = max(0, 5 - dtt["turns_held"])
             if dtt["turns_held"] >= 5:
@@ -1725,11 +1694,10 @@ def _resolve_win(s, phrases):
     if three_owner:
         owner_turn = next((t for t,sl in s["players"].items() if sl["user_id"]==three_owner),None)
         if s["hold_line"] and s["hold_line"]["owner"]==three_owner:
-            if full_turn:
-                s["hold_line"]["turns_held"] += 1
+            s["hold_line"]["turns_held"] += 1
         else:
             s["hold_line"] = {"owner":three_owner,"owner_turn":owner_turn,"turns_held":0}
-        if s["hold_line"]["turns_held"] >= WIN_HOLD_TURNS:
+        if s["hold_line"]["turns_held"] >= WIN_HOLD_TURNS - 1:
             owner_turn = s["hold_line"].get("owner_turn") or next(
                 (t for t, sl in s["players"].items() if sl["user_id"] == three_owner), None)
             if owner_turn is None: return
@@ -1783,8 +1751,7 @@ def _find_best_hint(s, db, calc_fn):
         team_a,team_b = s["rows"][ri],s["cols"][ci]
         existing = s["board"].get(str(cell_idx))
         for p in db:
-            if p["name"] in s["used_players"] or p.get("position", "") in EXCLUDED_POSITIONS: continue
-            if not p.get("position") and not p.get("jersey"): continue
+            if p["name"] in s["used_players"] or p.get("position","") in EXCLUDED_POSITIONS: continue
             if team_a.startswith("STAT:"):
                 stat_key = team_a.split(":",1)[1]
                 if team_b not in p.get("teams",[]) or team_b not in p.get("achievements",{}).get(stat_key,[]): continue
@@ -1797,28 +1764,6 @@ def _find_best_hint(s, db, calc_fn):
     if not candidates: return None,None
     candidates.sort(key=lambda x: x[0], reverse=True)
     return candidates[0][1],candidates[0][2]
-
-def _do_hint(s, db, calc_fn, serialise_fn, sport):
-    if s["game_over"]: return jsonify({"error":"Game is already over."}),400
-    slot = s["players"][s["turn"]]
-    if slot["hints_remaining"] <= 0: return jsonify({"error":"No hints remaining."}),400
-    player, cell = _find_best_hint(s, db, calc_fn)
-    if not player: return jsonify({"error":"No hint available."}),400
-    slot["hints_remaining"] -= 1
-    jersey = player.get("jersey","") or "?"
-    position = player.get("position","") or "?"
-    debut_year = player.get("debut_year","") or "?"
-    return jsonify({"jersey":jersey,"position":position,"draft_year":debut_year,"cell":cell,"state":serialise_fn(s)})
-
-def _do_pass(s, serialise_fn, win_phrases):
-    if s["game_over"]: return jsonify({"error":"Game is already over."}),400
-    s["turn_number"] += 1
-    s["miss_streak"] += 1
-    _resolve_win(s, win_phrases)
-    if not s["game_over"]: _check_alternate_win(s, win_phrases)
-    if s["game_over"]: _flush_stats(s, s.get("winner"))
-    _switch_turn(s)
-    return jsonify({"result":"passed","game_over":s["game_over"],"winner":s["winner"],"win_reason":s["win_reason"],"state":serialise_fn(s)})
 
 # ── PLAYER SLOTS & STATE ─────────────────────────────────────────────────────
 def make_player_slot(user, sport="nfl"):
@@ -1887,33 +1832,11 @@ def _slot_json(p, board):
             "is_bot":p.get("is_bot",False),"is_guest":p.get("is_guest",False),
             "bot_difficulty":p.get("bot_difficulty","")}
 
-def _compute_best_answers(s, db, calc_fn):
-    """Find the highest rarity (most common) player for each square."""
-    best = {}
-    for cell_idx in range(9):
-        ri, ci = cell_idx // 3, cell_idx % 3
-        team_a, team_b = s["rows"][ri], s["cols"][ci]
-        best_r, best_p = -1, None
-        for p in db:
-            if p.get("position","") in EXCLUDED_POSITIONS: continue
-            if team_a.startswith("STAT:"):
-                stat_key = team_a.split(":",1)[1]
-                if team_b not in p.get("teams",[]) or team_b not in p.get("achievements",{}).get(stat_key,[]): continue
-                r = calc_fn(p, team_b, team_b)
-            else:
-                if team_a not in p.get("teams",[]) or team_b not in p.get("teams",[]): continue
-                r = calc_fn(p, team_a, team_b)
-            if r > best_r:
-                best_r = r; best_p = p
-        if best_p:
-            best[str(cell_idx)] = {"player_name": best_p["name"], "rarity": best_r}
-    return best
-
-def _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_default, best_answers=None):
+def _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_default):
     def _row_name(t):
         if t.startswith("STAT:"): sc=s.get("stat_category"); return sc["label"] if sc else t
         return team_names_map.get(t,t)
-    result = {"rows":s["rows"],"cols":s["cols"],
+    return {"rows":s["rows"],"cols":s["cols"],
             "row_names":[_row_name(t) for t in s["rows"]],
             "col_names":[team_names_map.get(t,t) for t in s["cols"]],
             "row_logos":[team_logos_map.get(t,"") for t in s["rows"]],
@@ -1927,22 +1850,11 @@ def _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_d
             "data_years":s.get("data_years",data_years_default),
             "player1":_slot_json(s["players"][1],s["board"]),
             "player2":_slot_json(s["players"][2],s["board"])}
-    if best_answers and s["game_over"]:
-        result["best_answers"] = best_answers
-    return result
 
-def serialise_state(s):
-    ba = _compute_best_answers(s, PLAYERS_DB, calc_rarity) if s["game_over"] else None
-    return _serialise(s,TEAM_NAMES,TEAM_LOGOS,TEAM_MASCOTS,f"{NFL_START_YEAR}–2026",ba)
-def mlb_serialise_state(s):
-    ba = _compute_best_answers(s, MLB_PLAYERS_DB, calc_mlb_rarity) if s["game_over"] else None
-    return _serialise(s,MLB_TEAM_NAMES,MLB_LOGOS,MLB_TEAM_MASCOTS,f"{MLB_START_YEAR}–2026",ba)
-def nba_serialise_state(s):
-    ba = _compute_best_answers(s, NBA_PLAYERS_DB, calc_nba_rarity) if s["game_over"] else None
-    return _serialise(s,NBA_TEAM_NAMES,NBA_LOGOS,NBA_TEAM_MASCOTS,f"{NBA_START_YEAR}–2026",ba)
-def nhl_serialise_state(s):
-    ba = _compute_best_answers(s, NHL_PLAYERS_DB, calc_nhl_rarity) if s["game_over"] else None
-    return _serialise(s,NHL_TEAM_NAMES,NHL_LOGOS,NHL_TEAM_MASCOTS,f"{NHL_START_YEAR}–2026",ba)
+def serialise_state(s): return _serialise(s,TEAM_NAMES,TEAM_LOGOS,TEAM_MASCOTS,f"{NFL_START_YEAR}–2026")
+def mlb_serialise_state(s): return _serialise(s,MLB_TEAM_NAMES,MLB_LOGOS,MLB_TEAM_MASCOTS,f"{MLB_START_YEAR}–2026")
+def nba_serialise_state(s): return _serialise(s,NBA_TEAM_NAMES,NBA_LOGOS,NBA_TEAM_MASCOTS,f"{NBA_START_YEAR}–2026")
+def nhl_serialise_state(s): return _serialise(s,NHL_TEAM_NAMES,NHL_LOGOS,NHL_TEAM_MASCOTS,f"{NHL_START_YEAR}–2026")
 
 # ── HELPERS ────────────────────────────────────────────────────────────────────
 def _switch_turn(s): s["turn"] = 2 if s["turn"]==1 else 1
