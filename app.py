@@ -1173,11 +1173,15 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
     slot["hints_remaining"] -= 1
     ri, ci = cell_idx // 3, cell_idx % 3
     team_a, team_b = s["rows"][ri], s["cols"][ci]
-    # Build a useful hint message
-    first_initial = player["name"].split()[0][0] if player["name"].split() else "?"
-    last_name = player["name"].split()[-1] if player["name"].split() else "?"
-    teams_str = ", ".join(player.get("teams", [])[:4])
-    hint_msg = f"Try \"{first_initial}. {last_name}\" — played for {teams_str}"
+    # Build hint from position, jersey, debut year — don't reveal the name
+    position = player.get("position", "Unknown")
+    jersey = player.get("jersey", "?")
+    debut = player.get("debut_year", "?")
+    parts = []
+    if position: parts.append(f"Position: {position}")
+    if jersey and jersey != "?": parts.append(f"Jersey: #{jersey}")
+    if debut and debut != "?": parts.append(f"Debut: {debut}")
+    hint_msg = f"Cell {cell_idx + 1} — " + ", ".join(parts) if parts else "No additional info available"
     room_id = s.get("room_id")
     serialised = serialise_fn(s)
     if room_id:
@@ -1187,12 +1191,9 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
         "message": hint_msg,
         "hint": {
             "cell": cell_idx,
-            "player_name": player["name"],
-            "first_initial": first_initial,
-            "last_name": last_name,
-            "teams": player.get("teams", []),
-            "position": player.get("position", ""),
-            "headshot": player.get("headshot", ""),
+            "position": position,
+            "jersey": jersey,
+            "debut_year": debut,
         },
         "hints_remaining": slot["hints_remaining"],
         "state": serialised
@@ -1854,4 +1855,4 @@ def _get_serialise_fn_for_room(s):
     return {"nfl": serialise_state, "mlb": mlb_serialise_state, "nba": nba_serialise_state, "nhl": nhl_serialise_state}.get(sport, serialise_state)
 
 if __name__ == "__main__":
-    socketio.run(app, debug=True, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True)

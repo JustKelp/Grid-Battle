@@ -1546,8 +1546,9 @@ function updateScoreboard() {
 
   const hints = activeP.hints_remaining || 0;
   document.getElementById('hint-count').textContent = hints;
-  document.getElementById('btn-hint').disabled = hints <= 0 || activeP.is_bot;
-  document.getElementById('btn-pass').disabled = activeP.is_bot;
+  const notMyTurn = !isMyTurn();
+  document.getElementById('btn-hint').disabled = hints <= 0 || activeP.is_bot || notMyTurn;
+  document.getElementById('btn-pass').disabled = activeP.is_bot || notMyTurn;
 
   // Data years
   const dy = gameState.data_years;
@@ -1738,6 +1739,22 @@ function createEl(tag, className) {
   return el;
 }
 
+function isMyTurn() {
+  if (!gameState || !currentUser) return true; // local/guest mode — always allow
+  const activeP = gameState.turn === 1 ? gameState.player1 : gameState.player2;
+  // In local hotseat or bot games, always allow human clicks
+  if (activeP.is_bot) return false;
+  if (gameState.player1.is_guest && gameState.player2.is_guest) return true; // hotseat
+  // In online games, check if current user is the active player
+  if (currentUser.username === activeP.username) return true;
+  if (currentUser.id && String(currentUser.id) === String(activeP.user_id)) return true;
+  // If neither player matches current user (spectator?) allow anyway
+  const isP1 = currentUser.username === gameState.player1.username;
+  const isP2 = currentUser.username === gameState.player2.username;
+  if (!isP1 && !isP2) return true; // not a participant, don't block
+  return false;
+}
+
 // ── GAME ACTIONS ───────────────────────────────────────────────
 function handleTurnLogic() {
   const activeP = gameState.turn === 1 ? gameState.player1 : gameState.player2;
@@ -1814,6 +1831,7 @@ async function doBotTurn() {
 }
 
 async function passTurn() {
+  if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
   clearTurnTimer();
   const base = getApiBase();
   try {
@@ -1825,6 +1843,7 @@ async function passTurn() {
 }
 
 async function useHint() {
+  if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
   const base = getApiBase();
   try {
     const res = await apiCall(`${base}/hint`, 'POST', {});
@@ -1878,6 +1897,7 @@ function openSearch(idx) {
   if (!gameState || gameState.game_over) return;
   const activeP = gameState.turn === 1 ? gameState.player1 : gameState.player2;
   if (activeP.is_bot) return;
+  if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
 
   activeCellIdx = idx;
   kbActiveIdx = -1;
