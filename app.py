@@ -1855,4 +1855,4 @@ def _get_serialise_fn_for_room(s):
     return {"nfl": serialise_state, "mlb": mlb_serialise_state, "nba": nba_serialise_state, "nhl": nhl_serialise_state}.get(sport, serialise_state)
 
 if __name__ == "__main__":
-    socketio.run(app, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
