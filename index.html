@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>StatCheck — Professional Grid Trivia</title>
+<title>StatCheck — By Teez</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
@@ -965,7 +965,7 @@ input::placeholder { color: var(--text-dim); }
   <div class="header-left">
     <div class="logo-container" onclick="goHome()">
       <div class="logo">Stat<span>Check</span></div>
-      <div class="sub-brand" id="active-game-name">Professional Grid Trivia</div>
+      <div class="sub-brand" id="active-game-name">Powered By Teez</div>
     </div>
     <button class="btn-rules" onclick="showRules()" title="How to Play">?</button>
   </div>
@@ -978,18 +978,18 @@ input::placeholder { color: var(--text-dim); }
 <!-- ═══════════════════════════ LOGIN ═══════════════════════════ -->
 <div id="screen-login" class="screen active">
   <div class="card">
-    <h2>Access Terminal</h2>
+    <h2>Login</h2>
     <div class="form-group">
       <input type="text" id="login-user" placeholder="Username" autocomplete="username">
     </div>
     <div class="form-group">
       <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
     </div>
-    <button class="btn" style="width:100%" onclick="handleLogin()">Authenticate</button>
+    <button class="btn" style="width:100%" onclick="handleLogin()">Sign In</button>
     <div class="divider"></div>
     <div style="display:flex; justify-content:space-between; gap:12px;">
       <button class="btn btn-outline btn-small" style="flex:1" onclick="handleGuestLogin()">Play as Guest</button>
-      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Register</button>
+      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Create Account</button>
     </div>
   </div>
 </div>
@@ -997,10 +997,10 @@ input::placeholder { color: var(--text-dim); }
 <!-- ═══════════════════════════ REGISTER ════════════════════════ -->
 <div id="screen-register" class="screen">
   <div class="card">
-    <h2>New Operator</h2>
-    <div class="form-group"><input type="text" id="reg-user" placeholder="Username (letters, numbers, _)" autocomplete="username"></div>
+    <h2>Create Account</h2>
+    <div class="form-group"><input type="text" id="reg-user" placeholder="Username" autocomplete="username"></div>
     <div class="form-group"><input type="password" id="reg-pass" placeholder="Password" autocomplete="new-password"></div>
-    <button class="btn" style="width:100%" onclick="handleRegister()">Initialize</button>
+    <button class="btn" style="width:100%" onclick="handleRegister()">Create</button>
     <p style="margin-top:20px; text-align:center; font-size:0.85rem; color:var(--text-muted);">
       <span onclick="showScreen('screen-login')" style="color:var(--primary-gold); cursor:pointer; font-weight:600;">Return to Login</span>
     </p>
@@ -1009,36 +1009,36 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ LOBBY ═══════════════════════════ -->
 <div id="screen-lobby" class="screen">
-  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Discipline</h2>
-  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Choose Your Arena</p>
+  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Sport</h2>
+  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Choose Your Expertise</p>
   <div class="lobby-grid">
     <div class="select-card" data-sport="nfl" onclick="selectSport('nfl')">
       <h3>Check Down</h3>
-      <p>Football Operations</p>
+      <p>NFL Grid</p>
     </div>
     <div class="select-card" data-sport="mlb" onclick="selectSport('mlb')">
       <h3>Check Swing</h3>
-      <p>Baseball Operations</p>
+      <p>MLB Grid</p>
     </div>
     <div class="select-card" data-sport="nba" onclick="selectSport('nba')">
       <h3>Hand Check</h3>
-      <p>Basketball Operations</p>
+      <p>NBA Grid</p>
     </div>
     <div class="select-card" data-sport="nhl" onclick="selectSport('nhl')">
       <h3>Cross Check</h3>
-      <p>Hockey Operations</p>
+      <p>NHL Grid</p>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════ MATCHMAKING ═════════════════════ -->
 <div id="screen-matchmake" class="screen">
-  <h2 id="matchmake-title" style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Configure Opponent</h2>
-  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Select Challenge Level</p>
+  <h2 id="matchmake-title" style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Choose Opponent</h2>
+  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Select Challenge Difficulty</p>
   <div class="matchmake-grid" style="max-width:700px;">
     <div class="select-card" onclick="startMatch('guest')">
-      <h3>Local Hotseat</h3>
-      <p>Play a Guest Locally</p>
+      <h3>Local 1v1</h3>
+      <p>Play a Guest (Same Device)</p>
     </div>
     <div class="select-card" onclick="toggleMatchSub('ai')">
       <h3>Play AI</h3>
@@ -1058,11 +1058,11 @@ input::placeholder { color: var(--text-dim); }
         <p>Easy Difficulty</p>
       </div>
       <div class="select-card" onclick="startMatch('bot', 'medium')">
-        <h3>Pro</h3>
+        <h3>All-Star</h3>
         <p>Medium Difficulty</p>
       </div>
       <div class="select-card" onclick="startMatch('bot', 'hard')">
-        <h3>Legend</h3>
+        <h3>Hall of Fame</h3>
         <p>Hard Difficulty</p>
       </div>
     </div>
@@ -1082,7 +1082,7 @@ input::placeholder { color: var(--text-dim); }
     </div>
   </div>
 
-  <button class="btn btn-outline" style="margin-top:36px" onclick="showScreen('screen-lobby')">Back to Disciplines</button>
+  <button class="btn btn-outline" style="margin-top:36px" onclick="showScreen('screen-lobby')">Back to Sports Selection</button>
 </div>
 
 <!-- ═══════════════════════════ CREATE ROOM ═════════════════════ -->
@@ -1121,7 +1121,7 @@ input::placeholder { color: var(--text-dim); }
           <img class="player-mascot-icon" id="mascot-p1" src="" alt="" style="display:none;">
           <div class="player-name p1-name" id="name-p1">Player 1</div>
         </div>
-        <div class="player-stats">Sq: <span id="sq-p1">0</span> &nbsp;|&nbsp; Rar: <span id="rarity-p1">0</span></div>
+        <div class="player-stats">Squares: <span id="sq-p1">0</span> &nbsp;|&nbsp; Rarity: <span id="rarity-p1">0</span></div>
       </div>
 
       <div class="turn-indicator">
@@ -1149,8 +1149,8 @@ input::placeholder { color: var(--text-dim); }
     <div class="grid-wrapper" id="board-grid"></div>
 
     <div class="controls" id="game-controls">
-      <button class="btn btn-outline" id="btn-hint" onclick="useHint()">Request Intel (<span id="hint-count">3</span>)</button>
-      <button class="btn" id="btn-pass" onclick="passTurn()">Pass Turn</button>
+      <button class="btn btn-outline" id="btn-hint" onclick="useHint()">Hint (<span id="hint-count">3</span>)</button>
+      <button class="btn" id="btn-pass" onclick="passTurn()">Pass</button>
       <button class="btn btn-outline btn-danger" onclick="doForfeit()">Forfeit</button>
     </div>
   </div>
@@ -1179,7 +1179,7 @@ input::placeholder { color: var(--text-dim); }
 
     <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
       <button class="btn" onclick="rematch()">Rematch</button>
-      <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Discipline</button>
+      <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Sport</button>
     </div>
   </div>
 </div>
@@ -1341,7 +1341,7 @@ function updateHeaderUser() {
   if (currentUser) {
     btn.style.display = 'none';
     info.style.display = 'block';
-    info.textContent = `OP: ${currentUser.username.toUpperCase()}`;
+    info.textContent = `Signed in: ${currentUser.username.toUpperCase()}`;
   } else {
     btn.style.display = 'block';
     info.style.display = 'none';
