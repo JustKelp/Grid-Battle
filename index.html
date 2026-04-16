@@ -956,6 +956,116 @@ input::placeholder { color: var(--text-dim); }
   transition: all 0.15s;
 }
 .btn-copy:hover { background: rgba(195,151,40,0.2); }
+/* ═══════════════════════════════════════════════════════
+   PROFILE PANEL
+   ═══════════════════════════════════════════════════════ */
+.profile-content {
+  width: 100%; max-width: 520px;
+  background: linear-gradient(170deg, var(--bg-card-solid) 0%, var(--bg-darkest) 100%);
+  border: 1px solid var(--border-gold-bright);
+  border-radius: var(--radius-lg);
+  padding: 28px 24px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6), var(--shadow-glow);
+}
+.profile-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px;
+}
+.profile-header h3 {
+  font-family: 'Oswald', sans-serif;
+  color: var(--primary-gold);
+  letter-spacing: 0.08em;
+  font-size: 1.3rem;
+}
+.profile-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.profile-stat-box {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(207,196,147,0.12);
+  border-radius: var(--radius);
+  padding: 14px 10px;
+  text-align: center;
+}
+.profile-stat-value {
+  font-family: 'Oswald', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-gold);
+  line-height: 1;
+}
+.profile-stat-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-top: 4px;
+  font-weight: 600;
+}
+.profile-section-title {
+  font-family: 'Oswald', sans-serif;
+  color: var(--secondary-tan);
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.profile-teams-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.profile-team-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(207,196,147,0.1);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+.profile-team-row img {
+  width: 32px; height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.profile-team-row select {
+  flex: 1;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(207,196,147,0.2);
+  color: var(--text-primary);
+  font-family: 'Source Sans 3', sans-serif;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  outline: none;
+  cursor: pointer;
+}
+.profile-team-row select:focus {
+  border-color: var(--primary-gold);
+}
+.profile-team-label {
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  min-width: 30px;
+}
+#header-user-info {
+  cursor: pointer;
+  transition: color 0.2s;
+}
+#header-user-info:hover {
+  color: var(--text-primary) !important;
+}
 </style>
 </head>
 <body>
@@ -971,7 +1081,7 @@ input::placeholder { color: var(--text-dim); }
   </div>
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
-    <div id="header-user-info" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em;"></div>
+    <div id="header-user-info" onclick="showProfile()" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em;"></div>
   </div>
 </header>
 
@@ -1218,7 +1328,67 @@ input::placeholder { color: var(--text-dim); }
     <p>After <span class="rule-highlight">5 consecutive misses</span> by both players, the game ends. Most squares wins. Tiebreak by total rarity (lower wins). Perfect tie = draw.</p>
   </div>
 </div>
+<!-- ═══════════════════════════ PROFILE PANEL ═══════════════════ -->
+<div class="modal-overlay" id="profile-modal" onclick="if(event.target===this) hideProfile()">
+  <div class="profile-content">
+    <div class="profile-header">
+      <h3 id="profile-username">PROFILE</h3>
+      <button class="modal-close" onclick="hideProfile()">✕</button>
+    </div>
 
+    <div class="profile-stats-grid">
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-wins">0</div>
+        <div class="profile-stat-label">Wins</div>
+      </div>
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-losses">0</div>
+        <div class="profile-stat-label">Losses</div>
+      </div>
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-draws">0</div>
+        <div class="profile-stat-label">Draws</div>
+      </div>
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-pct">0%</div>
+        <div class="profile-stat-label">Guess %</div>
+      </div>
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-streak">0</div>
+        <div class="profile-stat-label">Win Streak</div>
+      </div>
+      <div class="profile-stat-box">
+        <div class="profile-stat-value" id="prof-best">0</div>
+        <div class="profile-stat-label">Best Streak</div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="profile-section-title">Favorite Teams</div>
+    <div class="profile-teams-grid">
+      <div class="profile-team-row">
+        <div class="profile-team-label">NFL</div>
+        <img id="prof-nfl-logo" src="" alt="">
+        <select id="prof-nfl-select" onchange="updateFavTeam('nfl', this.value)"></select>
+      </div>
+      <div class="profile-team-row">
+        <div class="profile-team-label">MLB</div>
+        <img id="prof-mlb-logo" src="" alt="">
+        <select id="prof-mlb-select" onchange="updateFavTeam('mlb', this.value)"></select>
+      </div>
+      <div class="profile-team-row">
+        <div class="profile-team-label">NBA</div>
+        <img id="prof-nba-logo" src="" alt="">
+        <select id="prof-nba-select" onchange="updateFavTeam('nba', this.value)"></select>
+      </div>
+      <div class="profile-team-row">
+        <div class="profile-team-label">NHL</div>
+        <img id="prof-nhl-logo" src="" alt="">
+        <select id="prof-nhl-select" onchange="updateFavTeam('nhl', this.value)"></select>
+      </div>
+    </div>
+  </div>
+</div>
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
 
@@ -1354,6 +1524,109 @@ function showRules() {
 }
 function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
+}
+
+// ── PROFILE PANEL ──────────────────────────────────────────────
+let teamsCache = {};
+
+async function showProfile() {
+  if (!currentUser || currentUser.is_guest) return;
+
+  // Refresh user data from server
+  try {
+    const data = await apiCall('/api/auth/login', 'POST', {
+      username: currentUser.username,
+      password: '__refresh__'
+    }, true);
+  } catch(e) {} // login will fail but we already have data
+
+  const u = currentUser;
+  document.getElementById('profile-username').textContent = u.username.toUpperCase();
+  document.getElementById('prof-wins').textContent = u.wins || 0;
+  document.getElementById('prof-losses').textContent = u.losses || 0;
+  document.getElementById('prof-draws').textContent = u.draws || 0;
+  document.getElementById('prof-streak').textContent = u.win_streak || 0;
+  document.getElementById('prof-best').textContent = u.best_streak || 0;
+
+  const lt = u.lifetime_total || 0;
+  const lc = u.lifetime_correct || 0;
+  const pct = lt > 0 ? Math.round(lc / lt * 100) : 0;
+  document.getElementById('prof-pct').textContent = pct + '%';
+
+  // Load team dropdowns
+  await loadTeamDropdowns();
+
+  document.getElementById('profile-modal').classList.add('active');
+}
+
+function hideProfile() {
+  document.getElementById('profile-modal').classList.remove('active');
+}
+
+async function loadTeamDropdowns() {
+  const endpoints = {
+    nfl: '/api/teams',
+    mlb: '/api/mlb/teams',
+    nba: '/api/nba/teams',
+    nhl: '/api/nhl/teams'
+  };
+
+  for (const [sport, url] of Object.entries(endpoints)) {
+    if (!teamsCache[sport]) {
+      try {
+        teamsCache[sport] = await apiCall(url, 'GET', null, true);
+      } catch(e) { teamsCache[sport] = {}; }
+    }
+
+    const select = document.getElementById(`prof-${sport}-select`);
+    const logo = document.getElementById(`prof-${sport}-logo`);
+    const currentMascot = currentUser[`${sport}_mascot`] || '';
+    const teams = teamsCache[sport];
+
+    // Clear and rebuild options
+    select.innerHTML = '';
+    const sorted = Object.entries(teams).sort((a, b) => a[1].name.localeCompare(b[1].name));
+    for (const [code, info] of sorted) {
+      const opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = info.name;
+      if (code === currentMascot) opt.selected = true;
+      select.appendChild(opt);
+    }
+
+    // Set logo
+    const teamInfo = teams[currentMascot];
+    if (teamInfo && teamInfo.logo) {
+      logo.src = teamInfo.logo;
+      logo.style.display = 'block';
+    } else {
+      logo.style.display = 'none';
+    }
+  }
+}
+
+async function updateFavTeam(sport, teamCode) {
+  if (!currentUser || currentUser.is_guest) return;
+  try {
+    const res = await apiCall('/api/auth/mascot', 'POST', {
+      username: currentUser.username,
+      sport: sport,
+      mascot: teamCode
+    });
+    if (res.ok && res.user) {
+      currentUser = res.user;
+      updateHeaderUser();
+      // Update the logo preview
+      const logo = document.getElementById(`prof-${sport}-logo`);
+      const teams = teamsCache[sport] || {};
+      const teamInfo = teams[teamCode];
+      if (teamInfo && teamInfo.logo) {
+        logo.src = teamInfo.logo;
+        logo.style.display = 'block';
+      }
+      showToast(`${sport.toUpperCase()} team updated`, 'success');
+    }
+  } catch(e) {}
 }
 
 // ── AUTHENTICATION ─────────────────────────────────────────────
@@ -2112,6 +2385,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
+    if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
   }
 });
 </script>
