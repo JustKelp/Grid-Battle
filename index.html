@@ -1502,14 +1502,15 @@ function updateGameState(state, fromSocket = false) {
     document.getElementById('active-game-name').textContent = GAME_NAMES[currentSport] || 'STATCHECK';
   }
 
-  // Show opponent action toast when update arrives via WebSocket
-// Close search modal if turn changed and it's no longer my turn
-  if (fromSocket && oldTurn !== null && oldTurn !== state.turn) {
-    if (document.getElementById('search-modal').classList.contains('active') && !isMyTurn()) {
-      hideSearch();
-      showToast("Opponent played — it's your turn now", "opponent");
+  // Close search modal and show opponent toasts on WebSocket updates only
+  if (fromSocket && oldTurn !== null && Object.keys(oldBoard).length > 0) {
+    // Close search modal if turn changed and it's no longer my turn
+    if (oldTurn !== state.turn) {
+      if (document.getElementById('search-modal').classList.contains('active') && !isMyTurn()) {
+        hideSearch();
+      }
     }
-  }
+    // Show what the opponent did
     for (let i = 0; i < 9; i++) {
       const key = i.toString();
       const oldCell = oldBoard[key];
@@ -1523,7 +1524,7 @@ function updateGameState(state, fromSocket = false) {
         } else {
           showToast(`${owner} claimed cell ${i+1} with ${newCell.player_name} (${Math.round(newCell.rarity*100)})`, 'opponent');
         }
-        break; // Only one cell changes per turn
+        break;
       }
     }
     // Detect pass (turn changed but no board change)
@@ -2041,7 +2042,8 @@ function updateKbActive(items) {
 }
 
 async function submitGuess(playerName) {
-  if (!isMyTurn()) { hideSearch(); showToast("Wait for your turn", "error"); return; }  const cell = activeCellIdx;
+  if (!isMyTurn()) { hideSearch(); showToast("Wait for your turn", "error"); return; }
+  const cell = activeCellIdx;
   hideSearch();
   clearTurnTimer();
   disableCellsBriefly();

@@ -1372,9 +1372,10 @@ def _do_bot_turn(s, db, calc_fn, serialise_fn, win_phrases):
     rarity = calc_fn(player, ta, tb)
     ck = str(cell_idx); existing = s["board"].get(ck)
     bot_slot["session_total"] += 1
+    s["used_players"].add(player["name"])  # Always mark as used before branching
     if existing and existing["owner"] != uid:
         if rarity < existing["rarity"]:
-            s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
+            s["board"][ck] = _cell_entry(uid, ct, player, rarity)
             bot_slot["session_correct"] += 1; s["miss_streak"] = 0
         else:
             # BUG FIX: bot steal_failed increments turn_number and miss_streak
@@ -1394,12 +1395,11 @@ def _do_bot_turn(s, db, calc_fn, serialise_fn, win_phrases):
             return jsonify({"result": "bot_steal_failed", "message": "Bot tried to steal but failed.", "state": serialised})
     elif existing and existing["owner"] == uid:
         if rarity < existing["rarity"]:
-            s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
+            s["board"][ck] = _cell_entry(uid, ct, player, rarity)
             bot_slot["session_correct"] += 1
-        # BUG FIX: only increment session_correct on actual improvement (handled above)
         s["miss_streak"] = 0
     else:
-        s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
+        s["board"][ck] = _cell_entry(uid, ct, player, rarity)
         bot_slot["session_correct"] += 1; s["miss_streak"] = 0
     s["turn_number"] += 1
     _resolve_win(s, win_phrases)
