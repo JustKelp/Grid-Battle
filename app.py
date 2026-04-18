@@ -994,6 +994,13 @@ def _make_miss(s, result, message, serialise_fn, win_phrases):
 def _do_guess(s, db, calc_fn, serialise_fn, team_names_map, aliases, correct_phrases, steal_phrases, miss_phrases, wrong_team_phrases, win_phrases, name_index=None):
     if s["game_over"]: return jsonify({"result": "game_over", "message": "Game is already over."}), 400
     data = request.json or {}
+    # Enforce turn in online games — reject guesses from wrong player
+    req_user = data.get("username")
+    if req_user:
+        active_slot = s["players"][s["turn"]]
+        if active_slot["username"] != req_user and not active_slot.get("is_guest"):
+            return jsonify({"result": "error", "message": "Not your turn."}), 400
+
     cell = int(data.get("cell", -1))
     player_name = sanitize_name(str(data.get("player", "")).strip())
     if not (0 <= cell <= 8): return jsonify({"result": "error", "message": "Invalid cell."}), 400
@@ -1173,14 +1180,16 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
     slot["hints_remaining"] -= 1
     ri, ci = cell_idx // 3, cell_idx % 3
     team_a, team_b = s["rows"][ri], s["cols"][ci]
-    # Build hint from position, jersey, debut year — don't reveal the name
-    position = player.get("position", "Unknown")
-    jersey = player.get("jersey", "?")
-    debut = player.get("debut_year", "?")
+    # Build hint — position, debut year, jersey, number of teams played for
+    position = player.get("position", "")
+    jersey = player.get("jersey", "")
+    debut = player.get("debut_year", 0)
+    num_teams = len(player.get("teams", []))
     parts = []
     if position: parts.append(f"Position: {position}")
-    if jersey and jersey != "?": parts.append(f"Jersey: #{jersey}")
-    if debut and debut != "?": parts.append(f"Debut: {debut}")
+    if debut and isinstance(debut, int) and debut > 0: parts.append(f"Debut: {debut}")
+    if jersey and str(jersey).strip(): parts.append(f"Jersey: #{jersey}")
+    if num_teams > 0: parts.append(f"Played for {num_teams} team{'s' if num_teams != 1 else ''}")
     hint_msg = f"Cell {cell_idx + 1} — " + ", ".join(parts) if parts else "No additional info available"
     room_id = s.get("room_id")
     serialised = serialise_fn(s)
@@ -1192,8 +1201,9 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
         "hint": {
             "cell": cell_idx,
             "position": position,
-            "jersey": jersey,
-            "debut_year": debut,
+            "jersey": jersey if jersey and str(jersey).strip() else "",
+            "debut_year": debut if isinstance(debut, int) and debut > 0 else "",
+            "num_teams": num_teams,
         },
         "hints_remaining": slot["hints_remaining"],
         "state": serialised
@@ -1362,12 +1372,10 @@ def _do_bot_turn(s, db, calc_fn, serialise_fn, win_phrases):
     rarity = calc_fn(player, ta, tb)
     ck = str(cell_idx); existing = s["board"].get(ck)
     bot_slot["session_total"] += 1
-    s["used_players"].add(player["name"])  # Always mark as used — bot tried them
     if existing and existing["owner"] != uid:
         if rarity < existing["rarity"]:
-            s["board"][ck] = _cell_entry(uid, ct, player, rarity)
-            bot_slot["session_correct"] += 1;
-            s["miss_streak"] = 0
+            s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
+            bot_slot["session_correct"] += 1; s["miss_streak"] = 0
         else:
             # BUG FIX: bot steal_failed increments turn_number and miss_streak
             s["miss_streak"] += 1
@@ -1383,17 +1391,16 @@ def _do_bot_turn(s, db, calc_fn, serialise_fn, win_phrases):
             if room_id:
                 save_room(room_id, s)
                 _emit_update(room_id, serialised)
-            return jsonify(
-                {"result": "bot_steal_failed", "message": "Bot tried to steal but failed.", "state": serialised})
+            return jsonify({"result": "bot_steal_failed", "message": "Bot tried to steal but failed.", "state": serialised})
     elif existing and existing["owner"] == uid:
         if rarity < existing["rarity"]:
-            s["board"][ck] = _cell_entry(uid, ct, player, rarity)
+            s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
             bot_slot["session_correct"] += 1
+        # BUG FIX: only increment session_correct on actual improvement (handled above)
         s["miss_streak"] = 0
     else:
-        s["board"][ck] = _cell_entry(uid, ct, player, rarity)
-        bot_slot["session_correct"] += 1;
-        s["miss_streak"] = 0
+        s["board"][ck] = _cell_entry(uid, ct, player, rarity); s["used_players"].add(player["name"])
+        bot_slot["session_correct"] += 1; s["miss_streak"] = 0
     s["turn_number"] += 1
     _resolve_win(s, win_phrases)
     # BUG FIX: add _check_alternate_win after _resolve_win (was missing)
@@ -1858,4 +1865,4 @@ def _get_serialise_fn_for_room(s):
     return {"nfl": serialise_state, "mlb": mlb_serialise_state, "nba": nba_serialise_state, "nhl": nhl_serialise_state}.get(sport, serialise_state)
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="127.0.0.1", port=5000, debug=False, allow_unsafe_werkzeug=True)

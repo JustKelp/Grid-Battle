@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>StatCheck — By Teez</title>
+<title>StatCheck — Professional Grid Trivia</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
@@ -956,116 +956,6 @@ input::placeholder { color: var(--text-dim); }
   transition: all 0.15s;
 }
 .btn-copy:hover { background: rgba(195,151,40,0.2); }
-/* ═══════════════════════════════════════════════════════
-   PROFILE PANEL
-   ═══════════════════════════════════════════════════════ */
-.profile-content {
-  width: 100%; max-width: 520px;
-  background: linear-gradient(170deg, var(--bg-card-solid) 0%, var(--bg-darkest) 100%);
-  border: 1px solid var(--border-gold-bright);
-  border-radius: var(--radius-lg);
-  padding: 28px 24px;
-  max-height: 85vh;
-  overflow-y: auto;
-  box-shadow: 0 16px 48px rgba(0,0,0,0.6), var(--shadow-glow);
-}
-.profile-header {
-  display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 20px;
-}
-.profile-header h3 {
-  font-family: 'Oswald', sans-serif;
-  color: var(--primary-gold);
-  letter-spacing: 0.08em;
-  font-size: 1.3rem;
-}
-.profile-stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-.profile-stat-box {
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(207,196,147,0.12);
-  border-radius: var(--radius);
-  padding: 14px 10px;
-  text-align: center;
-}
-.profile-stat-value {
-  font-family: 'Oswald', sans-serif;
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: var(--primary-gold);
-  line-height: 1;
-}
-.profile-stat-label {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-top: 4px;
-  font-weight: 600;
-}
-.profile-section-title {
-  font-family: 'Oswald', sans-serif;
-  color: var(--secondary-tan);
-  font-size: 0.9rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-.profile-teams-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-.profile-team-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid rgba(207,196,147,0.1);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-}
-.profile-team-row img {
-  width: 32px; height: 32px;
-  object-fit: contain;
-  flex-shrink: 0;
-}
-.profile-team-row select {
-  flex: 1;
-  background: rgba(0,0,0,0.4);
-  border: 1px solid rgba(207,196,147,0.2);
-  color: var(--text-primary);
-  font-family: 'Source Sans 3', sans-serif;
-  font-size: 0.85rem;
-  padding: 6px 8px;
-  border-radius: var(--radius);
-  outline: none;
-  cursor: pointer;
-}
-.profile-team-row select:focus {
-  border-color: var(--primary-gold);
-}
-.profile-team-label {
-  font-family: 'Oswald', sans-serif;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  min-width: 30px;
-}
-#header-user-info {
-  cursor: pointer;
-  transition: color 0.2s;
-}
-#header-user-info:hover {
-  color: var(--text-primary) !important;
-}
 </style>
 </head>
 <body>
@@ -1075,31 +965,31 @@ input::placeholder { color: var(--text-dim); }
   <div class="header-left">
     <div class="logo-container" onclick="goHome()">
       <div class="logo">Stat<span>Check</span></div>
-      <div class="sub-brand" id="active-game-name">Powered By Teez</div>
+      <div class="sub-brand" id="active-game-name">Professional Grid Trivia</div>
     </div>
     <button class="btn-rules" onclick="showRules()" title="How to Play">?</button>
   </div>
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
-    <div id="header-user-info" onclick="showProfile()" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em;"></div>
+    <div id="header-user-info" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em;"></div>
   </div>
 </header>
 
 <!-- ═══════════════════════════ LOGIN ═══════════════════════════ -->
 <div id="screen-login" class="screen active">
   <div class="card">
-    <h2>Login</h2>
+    <h2>Access Terminal</h2>
     <div class="form-group">
       <input type="text" id="login-user" placeholder="Username" autocomplete="username">
     </div>
     <div class="form-group">
       <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
     </div>
-    <button class="btn" style="width:100%" onclick="handleLogin()">Sign In</button>
+    <button class="btn" style="width:100%" onclick="handleLogin()">Authenticate</button>
     <div class="divider"></div>
     <div style="display:flex; justify-content:space-between; gap:12px;">
       <button class="btn btn-outline btn-small" style="flex:1" onclick="handleGuestLogin()">Play as Guest</button>
-      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Create Account</button>
+      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Register</button>
     </div>
   </div>
 </div>
@@ -1107,10 +997,10 @@ input::placeholder { color: var(--text-dim); }
 <!-- ═══════════════════════════ REGISTER ════════════════════════ -->
 <div id="screen-register" class="screen">
   <div class="card">
-    <h2>Create Account</h2>
-    <div class="form-group"><input type="text" id="reg-user" placeholder="Username" autocomplete="username"></div>
+    <h2>New Operator</h2>
+    <div class="form-group"><input type="text" id="reg-user" placeholder="Username (letters, numbers, _)" autocomplete="username"></div>
     <div class="form-group"><input type="password" id="reg-pass" placeholder="Password" autocomplete="new-password"></div>
-    <button class="btn" style="width:100%" onclick="handleRegister()">Create</button>
+    <button class="btn" style="width:100%" onclick="handleRegister()">Initialize</button>
     <p style="margin-top:20px; text-align:center; font-size:0.85rem; color:var(--text-muted);">
       <span onclick="showScreen('screen-login')" style="color:var(--primary-gold); cursor:pointer; font-weight:600;">Return to Login</span>
     </p>
@@ -1119,36 +1009,36 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ LOBBY ═══════════════════════════ -->
 <div id="screen-lobby" class="screen">
-  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Sport</h2>
-  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Choose Your Expertise</p>
+  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Discipline</h2>
+  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Choose Your Arena</p>
   <div class="lobby-grid">
     <div class="select-card" data-sport="nfl" onclick="selectSport('nfl')">
       <h3>Check Down</h3>
-      <p>NFL Grid</p>
+      <p>Football Operations</p>
     </div>
     <div class="select-card" data-sport="mlb" onclick="selectSport('mlb')">
       <h3>Check Swing</h3>
-      <p>MLB Grid</p>
+      <p>Baseball Operations</p>
     </div>
     <div class="select-card" data-sport="nba" onclick="selectSport('nba')">
       <h3>Hand Check</h3>
-      <p>NBA Grid</p>
+      <p>Basketball Operations</p>
     </div>
     <div class="select-card" data-sport="nhl" onclick="selectSport('nhl')">
       <h3>Cross Check</h3>
-      <p>NHL Grid</p>
+      <p>Hockey Operations</p>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════ MATCHMAKING ═════════════════════ -->
 <div id="screen-matchmake" class="screen">
-  <h2 id="matchmake-title" style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Choose Opponent</h2>
-  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Select Challenge Difficulty</p>
+  <h2 id="matchmake-title" style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Configure Opponent</h2>
+  <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Select Challenge Level</p>
   <div class="matchmake-grid" style="max-width:700px;">
     <div class="select-card" onclick="startMatch('guest')">
-      <h3>Local 1v1</h3>
-      <p>Play a Guest (Same Device)</p>
+      <h3>Local Hotseat</h3>
+      <p>Play a Guest Locally</p>
     </div>
     <div class="select-card" onclick="toggleMatchSub('ai')">
       <h3>Play AI</h3>
@@ -1168,11 +1058,11 @@ input::placeholder { color: var(--text-dim); }
         <p>Easy Difficulty</p>
       </div>
       <div class="select-card" onclick="startMatch('bot', 'medium')">
-        <h3>All-Star</h3>
+        <h3>Pro</h3>
         <p>Medium Difficulty</p>
       </div>
       <div class="select-card" onclick="startMatch('bot', 'hard')">
-        <h3>Hall of Fame</h3>
+        <h3>Legend</h3>
         <p>Hard Difficulty</p>
       </div>
     </div>
@@ -1192,7 +1082,7 @@ input::placeholder { color: var(--text-dim); }
     </div>
   </div>
 
-  <button class="btn btn-outline" style="margin-top:36px" onclick="showScreen('screen-lobby')">Back to Sports Selection</button>
+  <button class="btn btn-outline" style="margin-top:36px" onclick="showScreen('screen-lobby')">Back to Disciplines</button>
 </div>
 
 <!-- ═══════════════════════════ CREATE ROOM ═════════════════════ -->
@@ -1231,7 +1121,7 @@ input::placeholder { color: var(--text-dim); }
           <img class="player-mascot-icon" id="mascot-p1" src="" alt="" style="display:none;">
           <div class="player-name p1-name" id="name-p1">Player 1</div>
         </div>
-        <div class="player-stats">Squares: <span id="sq-p1">0</span> &nbsp;|&nbsp; Rarity: <span id="rarity-p1">0</span></div>
+        <div class="player-stats">Sq: <span id="sq-p1">0</span> &nbsp;|&nbsp; Rar: <span id="rarity-p1">0</span></div>
       </div>
 
       <div class="turn-indicator">
@@ -1259,8 +1149,8 @@ input::placeholder { color: var(--text-dim); }
     <div class="grid-wrapper" id="board-grid"></div>
 
     <div class="controls" id="game-controls">
-      <button class="btn btn-outline" id="btn-hint" onclick="useHint()">Hint (<span id="hint-count">3</span>)</button>
-      <button class="btn" id="btn-pass" onclick="passTurn()">Pass</button>
+      <button class="btn btn-outline" id="btn-hint" onclick="useHint()">Request Intel (<span id="hint-count">3</span>)</button>
+      <button class="btn" id="btn-pass" onclick="passTurn()">Pass Turn</button>
       <button class="btn btn-outline btn-danger" onclick="doForfeit()">Forfeit</button>
     </div>
   </div>
@@ -1289,7 +1179,7 @@ input::placeholder { color: var(--text-dim); }
 
     <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
       <button class="btn" onclick="rematch()">Rematch</button>
-      <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Sport</button>
+      <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Discipline</button>
     </div>
   </div>
 </div>
@@ -1328,67 +1218,7 @@ input::placeholder { color: var(--text-dim); }
     <p>After <span class="rule-highlight">5 consecutive misses</span> by both players, the game ends. Most squares wins. Tiebreak by total rarity (lower wins). Perfect tie = draw.</p>
   </div>
 </div>
-<!-- ═══════════════════════════ PROFILE PANEL ═══════════════════ -->
-<div class="modal-overlay" id="profile-modal" onclick="if(event.target===this) hideProfile()">
-  <div class="profile-content">
-    <div class="profile-header">
-      <h3 id="profile-username">PROFILE</h3>
-      <button class="modal-close" onclick="hideProfile()">✕</button>
-    </div>
 
-    <div class="profile-stats-grid">
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-wins">0</div>
-        <div class="profile-stat-label">Wins</div>
-      </div>
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-losses">0</div>
-        <div class="profile-stat-label">Losses</div>
-      </div>
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-draws">0</div>
-        <div class="profile-stat-label">Draws</div>
-      </div>
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-pct">0%</div>
-        <div class="profile-stat-label">Guess %</div>
-      </div>
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-streak">0</div>
-        <div class="profile-stat-label">Win Streak</div>
-      </div>
-      <div class="profile-stat-box">
-        <div class="profile-stat-value" id="prof-best">0</div>
-        <div class="profile-stat-label">Best Streak</div>
-      </div>
-    </div>
-
-    <div class="divider"></div>
-    <div class="profile-section-title">Favorite Teams</div>
-    <div class="profile-teams-grid">
-      <div class="profile-team-row">
-        <div class="profile-team-label">NFL</div>
-        <img id="prof-nfl-logo" src="" alt="">
-        <select id="prof-nfl-select" onchange="updateFavTeam('nfl', this.value)"></select>
-      </div>
-      <div class="profile-team-row">
-        <div class="profile-team-label">MLB</div>
-        <img id="prof-mlb-logo" src="" alt="">
-        <select id="prof-mlb-select" onchange="updateFavTeam('mlb', this.value)"></select>
-      </div>
-      <div class="profile-team-row">
-        <div class="profile-team-label">NBA</div>
-        <img id="prof-nba-logo" src="" alt="">
-        <select id="prof-nba-select" onchange="updateFavTeam('nba', this.value)"></select>
-      </div>
-      <div class="profile-team-row">
-        <div class="profile-team-label">NHL</div>
-        <img id="prof-nhl-logo" src="" alt="">
-        <select id="prof-nhl-select" onchange="updateFavTeam('nhl', this.value)"></select>
-      </div>
-    </div>
-  </div>
-</div>
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
 
@@ -1511,7 +1341,7 @@ function updateHeaderUser() {
   if (currentUser) {
     btn.style.display = 'none';
     info.style.display = 'block';
-    info.textContent = `Signed in: ${currentUser.username.toUpperCase()}`;
+    info.textContent = `OP: ${currentUser.username.toUpperCase()}`;
   } else {
     btn.style.display = 'block';
     info.style.display = 'none';
@@ -1524,109 +1354,6 @@ function showRules() {
 }
 function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
-}
-
-// ── PROFILE PANEL ──────────────────────────────────────────────
-let teamsCache = {};
-
-async function showProfile() {
-  if (!currentUser || currentUser.is_guest) return;
-
-  // Refresh user data from server
-  try {
-    const data = await apiCall('/api/auth/login', 'POST', {
-      username: currentUser.username,
-      password: '__refresh__'
-    }, true);
-  } catch(e) {} // login will fail but we already have data
-
-  const u = currentUser;
-  document.getElementById('profile-username').textContent = u.username.toUpperCase();
-  document.getElementById('prof-wins').textContent = u.wins || 0;
-  document.getElementById('prof-losses').textContent = u.losses || 0;
-  document.getElementById('prof-draws').textContent = u.draws || 0;
-  document.getElementById('prof-streak').textContent = u.win_streak || 0;
-  document.getElementById('prof-best').textContent = u.best_streak || 0;
-
-  const lt = u.lifetime_total || 0;
-  const lc = u.lifetime_correct || 0;
-  const pct = lt > 0 ? Math.round(lc / lt * 100) : 0;
-  document.getElementById('prof-pct').textContent = pct + '%';
-
-  // Load team dropdowns
-  await loadTeamDropdowns();
-
-  document.getElementById('profile-modal').classList.add('active');
-}
-
-function hideProfile() {
-  document.getElementById('profile-modal').classList.remove('active');
-}
-
-async function loadTeamDropdowns() {
-  const endpoints = {
-    nfl: '/api/teams',
-    mlb: '/api/mlb/teams',
-    nba: '/api/nba/teams',
-    nhl: '/api/nhl/teams'
-  };
-
-  for (const [sport, url] of Object.entries(endpoints)) {
-    if (!teamsCache[sport]) {
-      try {
-        teamsCache[sport] = await apiCall(url, 'GET', null, true);
-      } catch(e) { teamsCache[sport] = {}; }
-    }
-
-    const select = document.getElementById(`prof-${sport}-select`);
-    const logo = document.getElementById(`prof-${sport}-logo`);
-    const currentMascot = currentUser[`${sport}_mascot`] || '';
-    const teams = teamsCache[sport];
-
-    // Clear and rebuild options
-    select.innerHTML = '';
-    const sorted = Object.entries(teams).sort((a, b) => a[1].name.localeCompare(b[1].name));
-    for (const [code, info] of sorted) {
-      const opt = document.createElement('option');
-      opt.value = code;
-      opt.textContent = info.name;
-      if (code === currentMascot) opt.selected = true;
-      select.appendChild(opt);
-    }
-
-    // Set logo
-    const teamInfo = teams[currentMascot];
-    if (teamInfo && teamInfo.logo) {
-      logo.src = teamInfo.logo;
-      logo.style.display = 'block';
-    } else {
-      logo.style.display = 'none';
-    }
-  }
-}
-
-async function updateFavTeam(sport, teamCode) {
-  if (!currentUser || currentUser.is_guest) return;
-  try {
-    const res = await apiCall('/api/auth/mascot', 'POST', {
-      username: currentUser.username,
-      sport: sport,
-      mascot: teamCode
-    });
-    if (res.ok && res.user) {
-      currentUser = res.user;
-      updateHeaderUser();
-      // Update the logo preview
-      const logo = document.getElementById(`prof-${sport}-logo`);
-      const teams = teamsCache[sport] || {};
-      const teamInfo = teams[teamCode];
-      if (teamInfo && teamInfo.logo) {
-        logo.src = teamInfo.logo;
-        logo.style.display = 'block';
-      }
-      showToast(`${sport.toUpperCase()} team updated`, 'success');
-    }
-  } catch(e) {}
 }
 
 // ── AUTHENTICATION ─────────────────────────────────────────────
@@ -1766,12 +1493,50 @@ function updateGameState(state, fromSocket = false) {
   if (!state || !state.rows) return;
 
   const oldBoard = gameState ? {...gameState.board} : {};
+  const oldTurn = gameState ? gameState.turn : null;
   gameState = state;
   if (state.room_id) currentRoomId = state.room_id;
   // Keep sport in sync so API calls hit the correct sport endpoint
   if (state.sport) {
     currentSport = state.sport;
     document.getElementById('active-game-name').textContent = GAME_NAMES[currentSport] || 'STATCHECK';
+  }
+
+  // Show opponent action toast when update arrives via WebSocket
+// Close search modal if turn changed and it's no longer my turn
+  if (fromSocket && oldTurn !== null && oldTurn !== state.turn) {
+    if (document.getElementById('search-modal').classList.contains('active') && !isMyTurn()) {
+      hideSearch();
+      showToast("Opponent played — it's your turn now", "opponent");
+    }
+  }
+    for (let i = 0; i < 9; i++) {
+      const key = i.toString();
+      const oldCell = oldBoard[key];
+      const newCell = state.board[key];
+      if (newCell && (!oldCell || oldCell.player_name !== newCell.player_name)) {
+        const owner = newCell.owner_turn === 1 ? state.player1.username : state.player2.username;
+        if (oldCell && oldCell.owner_turn !== newCell.owner_turn) {
+          showToast(`${owner} stole cell ${i+1} with ${newCell.player_name} (${Math.round(newCell.rarity*100)})`, 'opponent');
+        } else if (oldCell && oldCell.owner_turn === newCell.owner_turn) {
+          showToast(`${owner} upgraded cell ${i+1} with ${newCell.player_name} (${Math.round(newCell.rarity*100)})`, 'opponent');
+        } else {
+          showToast(`${owner} claimed cell ${i+1} with ${newCell.player_name} (${Math.round(newCell.rarity*100)})`, 'opponent');
+        }
+        break; // Only one cell changes per turn
+      }
+    }
+    // Detect pass (turn changed but no board change)
+    if (oldTurn !== state.turn) {
+      const noChange = Object.keys(state.board).every(k => {
+        const o = oldBoard[k]; const n = state.board[k];
+        return o && n && o.player_name === n.player_name;
+      }) && Object.keys(oldBoard).length === Object.keys(state.board).length;
+      if (noChange) {
+        const passer = oldTurn === 1 ? state.player1.username : state.player2.username;
+        showToast(`${passer} passed their turn`, 'opponent');
+      }
+    }
   }
 
   renderBoard(oldBoard);
@@ -2038,8 +1803,8 @@ function handleTurnLogic() {
       setTimeout(doBotTurn, 3000 + Math.random() * 4000);
     }
   } else {
-    // Only start timer if not already running for this player
-    if (!turnTimerInterval) startTurnTimer();
+    // Always restart timer fresh for the new player's turn
+    startTurnTimer();
   }
 }
 
@@ -2276,7 +2041,7 @@ function updateKbActive(items) {
 }
 
 async function submitGuess(playerName) {
-  const cell = activeCellIdx;
+  if (!isMyTurn()) { hideSearch(); showToast("Wait for your turn", "error"); return; }  const cell = activeCellIdx;
   hideSearch();
   clearTurnTimer();
   disableCellsBriefly();
@@ -2284,7 +2049,8 @@ async function submitGuess(playerName) {
   try {
     const res = await apiCall(`${base}/guess`, 'POST', {
       cell: cell,
-      player: playerName
+      player: playerName,
+      username: currentUser ? currentUser.username : ''
     });
     // Color-coded toasts
     let toastType = 'success';
@@ -2385,7 +2151,6 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
-    if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
   }
 });
 </script>
