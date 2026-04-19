@@ -1864,5 +1864,46 @@ def _get_serialise_fn_for_room(s):
     sport = s.get("sport", "nfl")
     return {"nfl": serialise_state, "mlb": mlb_serialise_state, "nba": nba_serialise_state, "nhl": nhl_serialise_state}.get(sport, serialise_state)
 
+@socketio.on('rematch_request')
+def handle_rematch_request(data):
+    """Player requests a rematch — relay to opponent."""
+    room_id = data.get('room_id') if isinstance(data, dict) else None
+    from_user = data.get('from', 'Opponent') if isinstance(data, dict) else 'Opponent'
+    if room_id:
+        emit('rematch_requested', {'from': from_user}, room=room_id, include_self=False)
+
+@socketio.on('rematch_accept')
+def handle_rematch_accept(data):
+    """Opponent accepts rematch — create new game and notify both players."""
+    if not isinstance(data, dict): return
+    room_id = data.get('room_id')
+    if not room_id: return
+    s = get_room(room_id)
+    if not s: return
+    sport = s.get('sport', 'nfl')
+    new_state_fn = {'nfl': empty_state, 'mlb': mlb_empty_state, 'nba': nba_empty_state, 'nhl': nhl_empty_state}.get(sport, empty_state)
+    serialise_fn = _get_serialise_fn_for_room(s)
+    # Rebuild users from existing player slots
+    u1 = _resolve_user({"username": s["players"][1]["username"], "id": s["players"][1]["user_id"]})
+    u2 = _resolve_user({"username": s["players"][2]["username"], "id": s["players"][2]["user_id"]})
+    if not u1 or not u2: return
+    cleanup_stale_rooms()
+    new_room_id = _generate_room_id()
+    new_s = new_state_fn(u1, u2)
+    new_s["room_id"] = new_room_id
+    new_s["sport"] = sport
+    save_room(new_room_id, new_s)
+    serialised = serialise_fn(new_s)
+    serialised["room_id"] = new_room_id
+    sio_join_room(new_room_id)
+    socketio.emit('rematch_accepted', {'room_id': new_room_id, 'state': serialised}, room=room_id)
+
+@socketio.on('rematch_decline')
+def handle_rematch_decline(data):
+    """Opponent declines rematch — notify requester."""
+    room_id = data.get('room_id') if isinstance(data, dict) else None
+    if room_id:
+        emit('rematch_declined', {}, room=room_id, include_self=False)
+
 if __name__ == "__main__":
     socketio.run(app, host="127.0.0.1", port=5000, debug=False, allow_unsafe_werkzeug=True)

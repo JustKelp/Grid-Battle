@@ -1178,8 +1178,17 @@ input::placeholder { color: var(--text-dim); }
     </div>
 
     <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
-      <button class="btn" onclick="rematch()">Rematch</button>
+      <button class="btn" id="btn-rematch" onclick="rematch()">Rematch</button>
       <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Discipline</button>
+    </div>
+
+    <!-- Rematch prompt overlay (shown to opponent) -->
+    <div id="rematch-prompt" style="display:none; margin-top:20px; padding:16px; border:1px solid var(--accent-cyan); border-radius:var(--radius-lg); background:rgba(41,175,206,0.08); text-align:center;">
+      <p style="color:var(--accent-cyan); font-family:'Oswald',sans-serif; letter-spacing:0.08em; margin-bottom:12px;" id="rematch-prompt-text">Opponent wants a rematch!</p>
+      <div style="display:flex; gap:12px; justify-content:center;">
+        <button class="btn btn-small" onclick="acceptRematch()">Accept</button>
+        <button class="btn btn-small btn-outline btn-danger" onclick="declineRematch()">Decline</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1237,6 +1246,7 @@ let kbActiveIdx = -1;
 let cellsDisabledTimer = null;
 let previousBoard = {};
 let botPending = false;
+let isOnlineGame = false;
 let turnTimerInterval = null;
 let turnTimerSeconds = 0;
 const TURN_TIME_LIMIT = 90; // 1:30 per half-turn
@@ -1266,10 +1276,31 @@ function initSocket() {
   });
   socket.on('room_created', (data) => {
     currentRoomId = data.room_id;
+    isOnlineGame = true;
     document.getElementById('room-code-display').textContent = data.room_id;
   });
   socket.on('error', (data) => {
     showToast(data.message || 'Connection error', 'error');
+  });
+  socket.on('rematch_requested', (data) => {
+    const requester = data.from || 'Opponent';
+    showRematchPrompt(requester);
+  });
+  socket.on('rematch_accepted', (data) => {
+    hideRematchPrompt();
+    showToast('Rematch accepted!', 'success');
+    if (data.state) {
+      currentRoomId = data.room_id || currentRoomId;
+      previousBoard = {};
+      updateGameState(data.state);
+      showScreen('screen-game');
+    }
+  });
+  socket.on('rematch_declined', () => {
+    hideRematchPrompt();
+    document.getElementById('btn-rematch').disabled = false;
+    document.getElementById('btn-rematch').textContent = 'Rematch';
+    showToast('Opponent declined the rematch', 'error');
   });
 }
 
@@ -1413,6 +1444,7 @@ function toggleMatchSub(panel) {
 }
 
 async function startMatch(type, difficulty = 'medium') {
+  isOnlineGame = false;
   try {
     if (type === 'guest') {
       const data = await apiCall('/api/auth/guest', 'POST');
@@ -1441,6 +1473,7 @@ async function startMatch(type, difficulty = 'medium') {
 // ── ONLINE ROOM MANAGEMENT ─────────────────────────────────────
 function showCreateRoom() {
   if (!currentUser) return showScreen('screen-login');
+  isOnlineGame = true;
   initSocket();
   socket.emit('create_room', {sport: currentSport, player1: currentUser});
   showScreen('screen-room-create');
@@ -1455,11 +1488,35 @@ function showJoinRoom() {
 
 function copyRoomCode() {
   const code = document.getElementById('room-code-display').textContent;
-  navigator.clipboard.writeText(code).then(() => {
+  if (!code || code === '------') return;
+  // Try modern clipboard API first, fallback for HTTP
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(code).then(() => {
+      showToast('Code copied!', 'success');
+    }).catch(() => {
+      fallbackCopy(code);
+    });
+  } else {
+    fallbackCopy(code);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '-9999px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try {
+    document.execCommand('copy');
     showToast('Code copied!', 'success');
-  }).catch(() => {
+  } catch(e) {
     showToast('Copy failed — select the code manually', 'error');
-  });
+  }
+  document.body.removeChild(ta);
 }
 
 function cancelRoom() {
@@ -1470,6 +1527,7 @@ function cancelRoom() {
 async function joinRoom() {
   const code = document.getElementById('join-room-input').value.trim().toUpperCase();
   if (!code || code.length < 4) return showToast('Enter a valid room code', 'error');
+  isOnlineGame = true;
   initSocket();
   currentRoomId = code;
 
@@ -1779,18 +1837,15 @@ function createEl(tag, className) {
 }
 
 function isMyTurn() {
-  if (!gameState || !currentUser) return true; // local/guest mode — always allow
+  if (!gameState || !currentUser) return true;
   const activeP = gameState.turn === 1 ? gameState.player1 : gameState.player2;
-  // In local hotseat or bot games, always allow human clicks
+  // Bot's turn — never allow human clicks
   if (activeP.is_bot) return false;
-  if (gameState.player1.is_guest && gameState.player2.is_guest) return true; // hotseat
-  // In online games, check if current user is the active player
+  // Local hotseat (both guests on same screen, NOT online) — allow both
+  if (!isOnlineGame && gameState.player1.is_guest && gameState.player2.is_guest) return true;
+  // Check if current user is the active player by username
   if (currentUser.username === activeP.username) return true;
-  if (currentUser.id && String(currentUser.id) === String(activeP.user_id)) return true;
-  // If neither player matches current user (spectator?) allow anyway
-  const isP1 = currentUser.username === gameState.player1.username;
-  const isP2 = currentUser.username === gameState.player2.username;
-  if (!isP1 && !isP2) return true; // not a participant, don't block
+  // Not the active player
   return false;
 }
 
@@ -1818,8 +1873,11 @@ function startTurnTimer() {
     updateTimerDisplay();
     if (turnTimerSeconds <= 0) {
       clearTurnTimer();
-      showToast('Time expired — turn passed', 'error');
-      passTurn();
+      // Only the active player's screen should auto-pass
+      if (isMyTurn()) {
+        showToast('Time expired — turn passed', 'error');
+        passTurn();
+      }
     }
   }, 1000);
 }
@@ -1871,7 +1929,6 @@ async function doBotTurn() {
 
 async function passTurn() {
   if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
-  clearTurnTimer();
   const base = getApiBase();
   try {
     const res = await apiCall(`${base}/pass`, 'POST', {});
@@ -1915,6 +1972,15 @@ async function resetGame() {
 
 async function rematch() {
   if (!currentUser || !currentOpponent) return showScreen('screen-lobby');
+  if (isOnlineGame && socket && currentRoomId) {
+    // Online: send rematch request to opponent
+    socket.emit('rematch_request', {room_id: currentRoomId, from: currentUser.username});
+    const btn = document.getElementById('btn-rematch');
+    btn.disabled = true;
+    btn.textContent = 'Waiting...';
+    return;
+  }
+  // Local/bot: start immediately
   const base = getApiBase();
   try {
     const gameData = await apiCall(`${base}/game/start`, 'POST', {
@@ -1929,6 +1995,29 @@ async function rematch() {
     updateGameState(gameData);
     showScreen('screen-game');
   } catch(e) {}
+}
+
+function showRematchPrompt(from) {
+  document.getElementById('rematch-prompt-text').textContent = `${from} wants a rematch!`;
+  document.getElementById('rematch-prompt').style.display = 'block';
+}
+
+function hideRematchPrompt() {
+  document.getElementById('rematch-prompt').style.display = 'none';
+}
+
+function acceptRematch() {
+  if (socket && currentRoomId) {
+    socket.emit('rematch_accept', {room_id: currentRoomId, player: currentUser});
+  }
+  hideRematchPrompt();
+}
+
+function declineRematch() {
+  if (socket && currentRoomId) {
+    socket.emit('rematch_decline', {room_id: currentRoomId});
+  }
+  hideRematchPrompt();
 }
 
 // ── SEARCH / GUESSING ──────────────────────────────────────────
@@ -2045,7 +2134,6 @@ async function submitGuess(playerName) {
   if (!isMyTurn()) { hideSearch(); showToast("Wait for your turn", "error"); return; }
   const cell = activeCellIdx;
   hideSearch();
-  clearTurnTimer();
   disableCellsBriefly();
   const base = getApiBase();
   try {
@@ -2076,6 +2164,12 @@ function showEndScreen() {
   document.getElementById('end-p2-name').textContent = gameState.player2.username;
   document.getElementById('end-p2-sq').textContent = gameState.player2.squares;
   document.getElementById('end-p2-rarity').textContent = Math.round(gameState.player2.rarity_total * 100);
+
+  // Reset rematch UI
+  const btn = document.getElementById('btn-rematch');
+  btn.disabled = false;
+  btn.textContent = 'Rematch';
+  hideRematchPrompt();
 
   // Build end-screen mini board
   buildEndBoard();
