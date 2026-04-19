@@ -1905,5 +1905,56 @@ def handle_rematch_decline(data):
     if room_id:
         emit('rematch_declined', {}, room=room_id, include_self=False)
 
+@socketio.on('sport_switch_request')
+def handle_sport_switch_request(data):
+    """Player proposes switching to a different sport."""
+    if not isinstance(data, dict): return
+    room_id = data.get('room_id')
+    sport = data.get('sport', 'nfl')
+    from_user = data.get('from', 'Opponent')
+    if room_id:
+        emit('sport_switch_requested', {'sport': sport, 'from': from_user}, room=room_id, include_self=False)
+
+@socketio.on('sport_switch_accept')
+def handle_sport_switch_accept(data):
+    """Opponent accepts sport switch — create new game with new sport."""
+    if not isinstance(data, dict): return
+    room_id = data.get('room_id')
+    sport = data.get('sport', 'nfl')
+    if not room_id: return
+    s = get_room(room_id)
+    if not s: return
+    new_state_fn = {'nfl': empty_state, 'mlb': mlb_empty_state, 'nba': nba_empty_state, 'nhl': nhl_empty_state}.get(sport, empty_state)
+    serialise_fn = {'nfl': serialise_state, 'mlb': mlb_serialise_state, 'nba': nba_serialise_state, 'nhl': nhl_serialise_state}.get(sport, serialise_state)
+    u1 = _resolve_user({"username": s["players"][1]["username"], "id": s["players"][1]["user_id"]})
+    u2 = _resolve_user({"username": s["players"][2]["username"], "id": s["players"][2]["user_id"]})
+    if not u1 or not u2: return
+    cleanup_stale_rooms()
+    new_room_id = _generate_room_id()
+    new_s = new_state_fn(u1, u2)
+    new_s["room_id"] = new_room_id
+    new_s["sport"] = sport
+    save_room(new_room_id, new_s)
+    serialised = serialise_fn(new_s)
+    serialised["room_id"] = new_room_id
+    sio_join_room(new_room_id)
+    socketio.emit('sport_switch_accepted', {'room_id': new_room_id, 'sport': sport, 'state': serialised}, room=room_id)
+
+@socketio.on('sport_switch_decline')
+def handle_sport_switch_decline(data):
+    """Opponent declines sport switch."""
+    room_id = data.get('room_id') if isinstance(data, dict) else None
+    if room_id:
+        emit('sport_switch_declined', {}, room=room_id, include_self=False)
+
+@socketio.on('leave_room')
+def handle_leave_room(data):
+    """Player leaves the room — notify opponent."""
+    if not isinstance(data, dict): return
+    room_id = data.get('room_id')
+    username = data.get('username', 'Opponent')
+    if room_id:
+        emit('opponent_left', {'username': username}, room=room_id, include_self=False)
+
 if __name__ == "__main__":
     socketio.run(app, host="127.0.0.1", port=5000, debug=False, allow_unsafe_werkzeug=True)

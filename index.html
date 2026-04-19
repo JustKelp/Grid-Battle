@@ -1177,18 +1177,36 @@ input::placeholder { color: var(--text-dim); }
       </div>
     </div>
 
-    <div style="display:flex; gap:16px; justify-content:center; flex-wrap:wrap;">
+    <!-- Post-game lobby actions -->
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;" id="postgame-actions">
       <button class="btn" id="btn-rematch" onclick="rematch()">Rematch</button>
-      <button class="btn btn-outline" onclick="showScreen('screen-lobby')">New Discipline</button>
+      <button class="btn btn-outline btn-cyan" id="btn-switch-sport" onclick="showSportSwitch()">Switch Sport</button>
+      <button class="btn btn-outline btn-danger" onclick="leaveRoom()">Leave Room</button>
     </div>
 
-    <!-- Rematch prompt overlay (shown to opponent) -->
+    <!-- Sport picker (hidden until Switch Sport clicked) -->
+    <div id="sport-switch-picker" style="display:none; margin-top:20px;">
+      <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.1em; text-transform:uppercase; font-weight:600; margin-bottom:12px;">Pick a new sport</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:360px; margin:0 auto;">
+        <div class="select-card" onclick="proposeSportSwitch('nfl')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">NFL</h3></div>
+        <div class="select-card" onclick="proposeSportSwitch('mlb')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">MLB</h3></div>
+        <div class="select-card" onclick="proposeSportSwitch('nba')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">NBA</h3></div>
+        <div class="select-card" onclick="proposeSportSwitch('nhl')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">NHL</h3></div>
+      </div>
+    </div>
+
+    <!-- Prompt area for opponent proposals -->
     <div id="rematch-prompt" style="display:none; margin-top:20px; padding:16px; border:1px solid var(--accent-cyan); border-radius:var(--radius-lg); background:rgba(41,175,206,0.08); text-align:center;">
       <p style="color:var(--accent-cyan); font-family:'Oswald',sans-serif; letter-spacing:0.08em; margin-bottom:12px;" id="rematch-prompt-text">Opponent wants a rematch!</p>
       <div style="display:flex; gap:12px; justify-content:center;">
-        <button class="btn btn-small" onclick="acceptRematch()">Accept</button>
-        <button class="btn btn-small btn-outline btn-danger" onclick="declineRematch()">Decline</button>
+        <button class="btn btn-small" id="btn-accept-proposal" onclick="acceptProposal()">Accept</button>
+        <button class="btn btn-small btn-outline btn-danger" onclick="declineProposal()">Decline</button>
       </div>
+    </div>
+
+    <!-- Waiting state -->
+    <div id="postgame-waiting" style="display:none; margin-top:16px;">
+      <p class="room-waiting">Waiting for opponent's response...</p>
     </div>
   </div>
 </div>
@@ -1247,6 +1265,8 @@ let cellsDisabledTimer = null;
 let previousBoard = {};
 let botPending = false;
 let isOnlineGame = false;
+let pendingProposalType = null; // 'rematch' or 'sport_switch'
+let pendingProposalData = null;
 let turnTimerInterval = null;
 let turnTimerSeconds = 0;
 const TURN_TIME_LIMIT = 90; // 1:30 per half-turn
@@ -1297,10 +1317,41 @@ function initSocket() {
     }
   });
   socket.on('rematch_declined', () => {
-    hideRematchPrompt();
+    hidePostgameWaiting();
     document.getElementById('btn-rematch').disabled = false;
     document.getElementById('btn-rematch').textContent = 'Rematch';
     showToast('Opponent declined the rematch', 'error');
+  });
+  socket.on('sport_switch_requested', (data) => {
+    pendingProposalType = 'sport_switch';
+    pendingProposalData = data;
+    const sport = (data.sport || '').toUpperCase();
+    const from = data.from || 'Opponent';
+    document.getElementById('rematch-prompt-text').textContent = `${from} wants to switch to ${sport}!`;
+    document.getElementById('rematch-prompt').style.display = 'block';
+  });
+  socket.on('sport_switch_accepted', (data) => {
+    hidePostgameWaiting();
+    hideRematchPrompt();
+    showToast('Sport switched!', 'success');
+    if (data.state) {
+      currentRoomId = data.room_id || currentRoomId;
+      currentSport = data.sport || currentSport;
+      previousBoard = {};
+      updateGameState(data.state);
+      showScreen('screen-game');
+    }
+  });
+  socket.on('sport_switch_declined', () => {
+    hidePostgameWaiting();
+    showToast('Opponent declined the sport switch', 'error');
+  });
+  socket.on('opponent_left', () => {
+    hideRematchPrompt();
+    hidePostgameWaiting();
+    showToast('Opponent left the room', 'error');
+    isOnlineGame = false;
+    currentRoomId = null;
   });
 }
 
@@ -1973,11 +2024,10 @@ async function resetGame() {
 async function rematch() {
   if (!currentUser || !currentOpponent) return showScreen('screen-lobby');
   if (isOnlineGame && socket && currentRoomId) {
-    // Online: send rematch request to opponent
     socket.emit('rematch_request', {room_id: currentRoomId, from: currentUser.username});
-    const btn = document.getElementById('btn-rematch');
-    btn.disabled = true;
-    btn.textContent = 'Waiting...';
+    document.getElementById('btn-rematch').disabled = true;
+    document.getElementById('btn-rematch').textContent = 'Waiting...';
+    document.getElementById('postgame-waiting').style.display = 'block';
     return;
   }
   // Local/bot: start immediately
@@ -1997,27 +2047,73 @@ async function rematch() {
   } catch(e) {}
 }
 
-function showRematchPrompt(from) {
-  document.getElementById('rematch-prompt-text').textContent = `${from} wants a rematch!`;
+function showSportSwitch() {
+  const picker = document.getElementById('sport-switch-picker');
+  picker.style.display = picker.style.display === 'none' ? 'block' : 'none';
+}
+
+function proposeSportSwitch(sport) {
+  if (!isOnlineGame || !socket || !currentRoomId) {
+    // Local: just switch directly
+    currentSport = sport;
+    document.getElementById('active-game-name').textContent = GAME_NAMES[sport] || 'STATCHECK';
+    document.getElementById('sport-switch-picker').style.display = 'none';
+    rematch();
+    return;
+  }
+  socket.emit('sport_switch_request', {room_id: currentRoomId, sport: sport, from: currentUser.username});
+  document.getElementById('sport-switch-picker').style.display = 'none';
+  document.getElementById('postgame-waiting').style.display = 'block';
+  document.getElementById('btn-switch-sport').disabled = true;
+}
+
+function showRematchPrompt(requester) {
+  pendingProposalType = 'rematch';
+  pendingProposalData = {};
+  document.getElementById('rematch-prompt-text').textContent = `${requester} wants a rematch!`;
   document.getElementById('rematch-prompt').style.display = 'block';
 }
 
 function hideRematchPrompt() {
   document.getElementById('rematch-prompt').style.display = 'none';
+  pendingProposalType = null;
+  pendingProposalData = null;
 }
 
-function acceptRematch() {
-  if (socket && currentRoomId) {
+function hidePostgameWaiting() {
+  document.getElementById('postgame-waiting').style.display = 'none';
+  document.getElementById('btn-switch-sport').disabled = false;
+}
+
+function acceptProposal() {
+  if (!socket || !currentRoomId) return;
+  if (pendingProposalType === 'rematch') {
     socket.emit('rematch_accept', {room_id: currentRoomId, player: currentUser});
+  } else if (pendingProposalType === 'sport_switch') {
+    socket.emit('sport_switch_accept', {room_id: currentRoomId, sport: pendingProposalData.sport, player: currentUser});
   }
   hideRematchPrompt();
 }
 
-function declineRematch() {
-  if (socket && currentRoomId) {
+function declineProposal() {
+  if (!socket || !currentRoomId) return;
+  if (pendingProposalType === 'rematch') {
     socket.emit('rematch_decline', {room_id: currentRoomId});
+  } else if (pendingProposalType === 'sport_switch') {
+    socket.emit('sport_switch_decline', {room_id: currentRoomId});
   }
   hideRematchPrompt();
+}
+
+function leaveRoom() {
+  if (isOnlineGame && socket && currentRoomId) {
+    socket.emit('leave_room', {room_id: currentRoomId, username: currentUser ? currentUser.username : ''});
+  }
+  isOnlineGame = false;
+  currentRoomId = null;
+  currentOpponent = null;
+  clearTurnTimer();
+  showScreen('screen-lobby');
 }
 
 // ── SEARCH / GUESSING ──────────────────────────────────────────
@@ -2165,11 +2261,14 @@ function showEndScreen() {
   document.getElementById('end-p2-sq').textContent = gameState.player2.squares;
   document.getElementById('end-p2-rarity').textContent = Math.round(gameState.player2.rarity_total * 100);
 
-  // Reset rematch UI
+  // Reset post-game lobby UI
   const btn = document.getElementById('btn-rematch');
   btn.disabled = false;
   btn.textContent = 'Rematch';
+  document.getElementById('btn-switch-sport').disabled = false;
+  document.getElementById('sport-switch-picker').style.display = 'none';
   hideRematchPrompt();
+  hidePostgameWaiting();
 
   // Build end-screen mini board
   buildEndBoard();
