@@ -956,6 +956,44 @@ input::placeholder { color: var(--text-dim); }
   transition: all 0.15s;
 }
 .btn-copy:hover { background: rgba(195,151,40,0.2); }
+
+/* Stat category tooltip */
+.stat-header { cursor: pointer; position: relative; }
+.stat-header span { border-bottom: 1px dashed var(--accent-cyan); }
+.stat-header:hover span { color: var(--accent-cyan); }
+
+.stat-tooltip {
+  display: none;
+  position: fixed;
+  z-index: 9999;
+  background: linear-gradient(170deg, var(--bg-card-solid) 0%, var(--bg-darkest) 100%);
+  border: 1px solid var(--accent-cyan);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  max-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 12px rgba(41,175,206,0.15);
+  text-align: left;
+}
+.stat-tooltip.active { display: block; }
+.stat-tooltip-title {
+  font-family: 'Oswald', sans-serif;
+  color: var(--accent-cyan);
+  font-size: 1.1rem;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+.stat-tooltip-desc {
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+.stat-tooltip-note {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: italic;
+  line-height: 1.4;
+}
 </style>
 </head>
 <body>
@@ -1249,6 +1287,11 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
+<div class="stat-tooltip" id="stat-tooltip">
+  <div class="stat-tooltip-title" id="stat-tooltip-title"></div>
+  <div class="stat-tooltip-desc" id="stat-tooltip-desc"></div>
+  <div class="stat-tooltip-note" id="stat-tooltip-note"></div>
+</div>
 
 <!-- ═══════════════════════════ JAVASCRIPT ══════════════════════ -->
 <script>
@@ -1439,7 +1482,33 @@ function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
 }
 
-// ── AUTHENTICATION ─────────────────────────────────────────────
+// ── STAT TOOLTIP ──────────────────────────────────────────────
+function showStatTooltip(statKey, event) {
+  const tooltip = document.getElementById('stat-tooltip');
+  const cats = gameState.stat_categories || {};
+  const cat = cats[statKey] || {};
+
+  document.getElementById('stat-tooltip-title').textContent = cat.label || statKey;
+  document.getElementById('stat-tooltip-desc').textContent = cat.desc || 'Complete this stat with the intersecting team.';
+  document.getElementById('stat-tooltip-note').textContent =
+    'Must be achieved in a single season while playing for the intersecting team.';
+
+  // Position near the click
+  const x = Math.min(event.clientX, window.innerWidth - 340);
+  const y = Math.min(event.clientY + 10, window.innerHeight - 150);
+  tooltip.style.left = x + 'px';
+  tooltip.style.top = y + 'px';
+  tooltip.classList.add('active');
+
+  // Close on next click anywhere
+  setTimeout(() => {
+    document.addEventListener('click', hideStatTooltip, {once: true});
+  }, 10);
+}
+
+function hideStatTooltip() {
+  document.getElementById('stat-tooltip').classList.remove('active');
+}
 async function handleLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value;
@@ -1802,12 +1871,24 @@ function renderBoard(oldBoard) {
   for (let r = 0; r < 3; r++) {
     const rowName = gameState.row_names[r];
     const rowLogo = gameState.row_logos[r];
+    const rowRaw = gameState.rows[r];
     const rowHdr = createEl('div', 'grid-header');
     if (rowLogo) {
       const img = document.createElement('img');
       img.src = rowLogo;
       img.alt = rowName;
       rowHdr.appendChild(img);
+    } else if (rowRaw && rowRaw.startsWith('STAT:')) {
+      // Stat category header — make clickable
+      rowHdr.classList.add('stat-header');
+      const sp = document.createElement('span');
+      sp.textContent = rowName;
+      rowHdr.appendChild(sp);
+      const statKey = rowRaw.split(':')[1];
+      rowHdr.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showStatTooltip(statKey, e);
+      });
     } else {
       const sp = document.createElement('span');
       sp.textContent = rowName;
@@ -2352,6 +2433,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
+    hideStatTooltip();
   }
 });
 </script>
