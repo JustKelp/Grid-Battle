@@ -1180,13 +1180,14 @@ input::placeholder { color: var(--text-dim); }
     <!-- Post-game lobby actions -->
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;" id="postgame-actions">
       <button class="btn" id="btn-rematch" onclick="rematch()">Rematch</button>
-      <button class="btn btn-outline btn-cyan" id="btn-switch-sport" onclick="showSportSwitch()">Switch Sport</button>
-      <button class="btn btn-outline btn-danger" onclick="leaveRoom()">Leave Room</button>
+      <button class="btn btn-outline btn-cyan" id="btn-new-game" onclick="showSportSwitch()">New Game</button>
+      <button class="btn btn-outline btn-danger" id="btn-leave-room" onclick="leaveRoom()">Leave Room</button>
+      <button class="btn btn-outline" id="btn-new-discipline" onclick="showScreen('screen-lobby')">New Discipline</button>
     </div>
 
-    <!-- Sport picker (hidden until Switch Sport clicked) -->
+    <!-- Sport picker (hidden until New Game clicked) -->
     <div id="sport-switch-picker" style="display:none; margin-top:20px;">
-      <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.1em; text-transform:uppercase; font-weight:600; margin-bottom:12px;">Pick a new sport</p>
+      <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.1em; text-transform:uppercase; font-weight:600; margin-bottom:12px;">Pick a sport</p>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:360px; margin:0 auto;">
         <div class="select-card" onclick="proposeSportSwitch('nfl')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">NFL</h3></div>
         <div class="select-card" onclick="proposeSportSwitch('mlb')" style="padding:16px 12px;"><h3 style="font-size:1.1rem;">MLB</h3></div>
@@ -1327,13 +1328,13 @@ function initSocket() {
     pendingProposalData = data;
     const sport = (data.sport || '').toUpperCase();
     const from = data.from || 'Opponent';
-    document.getElementById('rematch-prompt-text').textContent = `${from} wants to switch to ${sport}!`;
+    document.getElementById('rematch-prompt-text').textContent = `${from} wants to play ${sport}!`;
     document.getElementById('rematch-prompt').style.display = 'block';
   });
   socket.on('sport_switch_accepted', (data) => {
     hidePostgameWaiting();
     hideRematchPrompt();
-    showToast('Sport switched!', 'success');
+    showToast('New game starting!', 'success');
     if (data.state) {
       currentRoomId = data.room_id || currentRoomId;
       currentSport = data.sport || currentSport;
@@ -2064,7 +2065,7 @@ function proposeSportSwitch(sport) {
   socket.emit('sport_switch_request', {room_id: currentRoomId, sport: sport, from: currentUser.username});
   document.getElementById('sport-switch-picker').style.display = 'none';
   document.getElementById('postgame-waiting').style.display = 'block';
-  document.getElementById('btn-switch-sport').disabled = true;
+  document.getElementById('btn-new-game').disabled = true;
 }
 
 function showRematchPrompt(requester) {
@@ -2082,7 +2083,7 @@ function hideRematchPrompt() {
 
 function hidePostgameWaiting() {
   document.getElementById('postgame-waiting').style.display = 'none';
-  document.getElementById('btn-switch-sport').disabled = false;
+  document.getElementById('btn-new-game').disabled = false;
 }
 
 function acceptProposal() {
@@ -2265,7 +2266,12 @@ function showEndScreen() {
   const btn = document.getElementById('btn-rematch');
   btn.disabled = false;
   btn.textContent = 'Rematch';
-  document.getElementById('btn-switch-sport').disabled = false;
+  // Online: show New Game + Leave Room. Local: show Rematch + New Discipline
+  btn.style.display = isOnlineGame ? 'none' : 'inline-block';
+  document.getElementById('btn-new-game').style.display = isOnlineGame ? 'inline-block' : 'none';
+  document.getElementById('btn-leave-room').style.display = isOnlineGame ? 'inline-block' : 'none';
+  document.getElementById('btn-new-discipline').style.display = isOnlineGame ? 'none' : 'inline-block';
+  document.getElementById('btn-new-game').disabled = false;
   document.getElementById('sport-switch-picker').style.display = 'none';
   hideRematchPrompt();
   hidePostgameWaiting();
