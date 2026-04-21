@@ -957,42 +957,48 @@ input::placeholder { color: var(--text-dim); }
 }
 .btn-copy:hover { background: rgba(195,151,40,0.2); }
 
-/* Stat category tooltip */
-.stat-header { cursor: pointer; position: relative; }
-.stat-header span { border-bottom: none; }
-.stat-header:hover span { color: var(--accent-cyan); }
-
-.stat-tooltip {
-  display: none;
-  position: fixed;
-  z-index: 9999;
-  background: linear-gradient(170deg, var(--bg-card-solid) 0%, var(--bg-darkest) 100%);
-  border: 1px solid var(--accent-cyan);
-  border-radius: var(--radius-lg);
-  padding: 16px 20px;
-  max-width: 320px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 12px rgba(41,175,206,0.15);
-  text-align: left;
-}
-.stat-tooltip.active { display: block; }
-.stat-tooltip-title {
-  font-family: 'Oswald', sans-serif;
-  color: var(--accent-cyan);
-  font-size: 1.1rem;
-  letter-spacing: 0.06em;
-  margin-bottom: 8px;
-}
-.stat-tooltip-desc {
-  color: var(--text-primary);
+/* Leaderboard */
+.lb-row {
+  display: grid;
+  grid-template-columns: 30px 1fr 50px 50px 60px;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid rgba(207,196,147,0.08);
+  align-items: center;
   font-size: 0.85rem;
-  line-height: 1.5;
-  margin-bottom: 6px;
 }
-.stat-tooltip-note {
+.lb-row:last-child { border-bottom: none; }
+.lb-row.lb-header {
+  font-family: 'Oswald', sans-serif;
   color: var(--text-muted);
-  font-size: 0.75rem;
-  font-style: italic;
-  line-height: 1.4;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid rgba(207,196,147,0.2);
+  padding-bottom: 8px;
+}
+.lb-rank {
+  font-family: 'Oswald', sans-serif;
+  color: var(--primary-gold);
+  font-weight: 700;
+  text-align: center;
+}
+.lb-rank.top-3 { color: var(--accent-cyan); }
+.lb-name {
+  font-family: 'Oswald', sans-serif;
+  color: var(--text-primary);
+  letter-spacing: 0.05em;
+}
+.lb-stat {
+  color: var(--text-muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.lb-wins {
+  color: var(--primary-gold);
+  text-align: center;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 </style>
 </head>
@@ -1009,12 +1015,27 @@ input::placeholder { color: var(--text-dim); }
   </div>
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
-    <div id="header-user-info" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em;"></div>
+    <div id="header-user-info" onclick="showProfile()" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em; cursor:pointer;"></div>
+    <button class="btn btn-small btn-outline btn-danger" id="btn-logout" onclick="handleLogout()" style="display:none; margin-left:10px;">Logout</button>
   </div>
 </header>
 
 <!-- ═══════════════════════════ LOGIN ═══════════════════════════ -->
 <div id="screen-login" class="screen active">
+  <!-- Game explanation (shown only to logged-out users) -->
+  <div class="card" style="max-width:560px; text-align:center; margin-bottom:20px;">
+    <h2 style="color:var(--primary-gold); margin-bottom:12px;">What is StatCheck?</h2>
+    <p style="color:var(--text-primary); line-height:1.6; margin-bottom:12px;">
+      A competitive 2-player sports trivia tic-tac-toe. Claim cells by naming athletes who played for both the row and column teams. The rarer the player, the lower your score — and the lower your score, the closer you are to winning.
+    </p>
+    <p style="color:var(--text-muted); font-size:0.85rem; line-height:1.5;">
+      Steal your opponent's cells with a rarer answer. Complete a three-in-a-row to win. Play solo against AI bots, couch coop in hotseat, or online against a friend using a room code.
+    </p>
+    <div style="display:flex; gap:14px; justify-content:center; margin-top:16px; flex-wrap:wrap; font-family:'Oswald',sans-serif; letter-spacing:0.1em; font-size:0.8rem; color:var(--accent-cyan);">
+      <span>NFL</span><span>MLB</span><span>NBA</span><span>NHL</span>
+    </div>
+  </div>
+
   <div class="card">
     <h2>Access Terminal</h2>
     <div class="form-group">
@@ -1065,6 +1086,17 @@ input::placeholder { color: var(--text-dim); }
     <div class="select-card" data-sport="nhl" onclick="selectSport('nhl')">
       <h3>Cross Check</h3>
       <p>Hockey Operations</p>
+    </div>
+  </div>
+
+  <!-- Leaderboard -->
+  <div style="margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <h3 style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.1em; font-size:1.1rem;">Top Operatives</h3>
+      <button class="btn btn-small btn-outline" onclick="loadLeaderboard()">Refresh</button>
+    </div>
+    <div id="leaderboard-list" style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.12); border-radius:var(--radius); padding:14px 18px;">
+      <p style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">Loading...</p>
     </div>
   </div>
 </div>
@@ -1287,11 +1319,6 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
-<div class="stat-tooltip" id="stat-tooltip">
-  <div class="stat-tooltip-title" id="stat-tooltip-title"></div>
-  <div class="stat-tooltip-desc" id="stat-tooltip-desc"></div>
-  <div class="stat-tooltip-note" id="stat-tooltip-note"></div>
-</div>
 
 <!-- ═══════════════════════════ JAVASCRIPT ══════════════════════ -->
 <script>
@@ -1441,6 +1468,10 @@ async function apiCall(endpoint, method = 'GET', body = null, silent = false) {
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
+  // Auto-refresh leaderboard when lobby is shown
+  if (id === 'screen-lobby' && typeof loadLeaderboard === 'function') {
+    loadLeaderboard();
+  }
 }
 
 function goHome() {
@@ -1464,14 +1495,62 @@ function showToast(msg, type = 'default') {
 function updateHeaderUser() {
   const btn = document.getElementById('btn-login-hdr');
   const info = document.getElementById('header-user-info');
-  if (currentUser) {
+  const logoutBtn = document.getElementById('btn-logout');
+  if (currentUser && !currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'block';
     info.textContent = `OP: ${currentUser.username.toUpperCase()}`;
+    logoutBtn.style.display = 'inline-block';
+  } else if (currentUser && currentUser.is_guest) {
+    btn.style.display = 'none';
+    info.style.display = 'block';
+    info.textContent = `GUEST: ${currentUser.username.toUpperCase()}`;
+    logoutBtn.style.display = 'inline-block';
   } else {
     btn.style.display = 'block';
     info.style.display = 'none';
+    logoutBtn.style.display = 'none';
   }
+}
+
+// ── SESSION PERSISTENCE ────────────────────────────────────────
+function saveSession() {
+  if (currentUser && !currentUser.is_guest) {
+    try { localStorage.setItem('statcheck_user', JSON.stringify(currentUser)); } catch(e) {}
+  }
+}
+
+function loadSession() {
+  try {
+    const saved = localStorage.getItem('statcheck_user');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.username && !parsed.is_guest) {
+        currentUser = parsed;
+        updateHeaderUser();
+        showScreen('screen-lobby');
+        return true;
+      }
+    }
+  } catch(e) {}
+  return false;
+}
+
+function handleLogout() {
+  try { localStorage.removeItem('statcheck_user'); } catch(e) {}
+  if (socket) {
+    try { socket.disconnect(); } catch(e) {}
+    socket = null;
+  }
+  currentUser = null;
+  currentOpponent = null;
+  currentRoomId = null;
+  isOnlineGame = false;
+  gameState = null;
+  clearTurnTimer();
+  updateHeaderUser();
+  showToast('Logged out', 'success');
+  showScreen('screen-login');
 }
 
 // ── RULES MODAL ────────────────────────────────────────────────
@@ -1482,40 +1561,15 @@ function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
 }
 
-// ── STAT TOOLTIP ──────────────────────────────────────────────
-function showStatTooltip(statKey, event) {
-  const tooltip = document.getElementById('stat-tooltip');
-  const cats = gameState.stat_categories || {};
-  const cat = cats[statKey] || {};
-
-  document.getElementById('stat-tooltip-title').textContent = cat.label || statKey;
-  document.getElementById('stat-tooltip-desc').textContent = cat.desc || 'Complete this stat with the intersecting team.';
-  document.getElementById('stat-tooltip-note').textContent =
-    'Must be achieved in a single season while playing for the intersecting team.';
-
-  // Position near the click
-  const x = Math.min(event.clientX, window.innerWidth - 340);
-  const y = Math.min(event.clientY + 10, window.innerHeight - 150);
-  tooltip.style.left = x + 'px';
-  tooltip.style.top = y + 'px';
-  tooltip.classList.add('active');
-
-  // Close on next click anywhere
-  setTimeout(() => {
-    document.addEventListener('click', hideStatTooltip, {once: true});
-  }, 10);
-}
-
-function hideStatTooltip() {
-  document.getElementById('stat-tooltip').classList.remove('active');
-}
+// ── AUTHENTICATION ─────────────────────────────────────────────
 async function handleLogin() {
   const u = document.getElementById('login-user').value.trim();
   const p = document.getElementById('login-pass').value;
-  if (!u || !p) return showToast('Credentials required', 'error');
+  if (!u || !p) return showToast('Username and password required', 'error');
   try {
     const data = await apiCall('/api/auth/login', 'POST', {username: u, password: p});
     currentUser = data.user;
+    saveSession();
     updateHeaderUser();
     initSocket();
     showScreen('screen-lobby');
@@ -1525,10 +1579,12 @@ async function handleLogin() {
 async function handleRegister() {
   const u = document.getElementById('reg-user').value.trim();
   const p = document.getElementById('reg-pass').value;
-  if (!u || !p) return showToast('Credentials required', 'error');
+  if (!u || !p) return showToast('Username and password required', 'error');
+  if (p.length < 4) return showToast('Password must be at least 4 characters', 'error');
   try {
     const data = await apiCall('/api/auth/register', 'POST', {username: u, password: p});
     currentUser = data.user;
+    saveSession();
     updateHeaderUser();
     initSocket();
     showScreen('screen-lobby');
@@ -1871,24 +1927,12 @@ function renderBoard(oldBoard) {
   for (let r = 0; r < 3; r++) {
     const rowName = gameState.row_names[r];
     const rowLogo = gameState.row_logos[r];
-    const rowRaw = gameState.rows[r];
     const rowHdr = createEl('div', 'grid-header');
     if (rowLogo) {
       const img = document.createElement('img');
       img.src = rowLogo;
       img.alt = rowName;
       rowHdr.appendChild(img);
-    } else if (rowRaw && rowRaw.startsWith('STAT:')) {
-      // Stat category header — make clickable
-      rowHdr.classList.add('stat-header');
-      const sp = document.createElement('span');
-      sp.textContent = rowName;
-      rowHdr.appendChild(sp);
-      const statKey = rowRaw.split(':')[1];
-      rowHdr.addEventListener('click', (e) => {
-        e.stopPropagation();
-        showStatTooltip(statKey, e);
-      });
     } else {
       const sp = document.createElement('span');
       sp.textContent = rowName;
@@ -2433,9 +2477,47 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
-    hideStatTooltip();
   }
 });
+
+// ── Auto-restore session on page load ──────────────────────────
+loadSession();
+loadLeaderboard();
+
+// ── LEADERBOARD ────────────────────────────────────────────────
+async function loadLeaderboard() {
+  const container = document.getElementById('leaderboard-list');
+  if (!container) return;
+  try {
+    const data = await apiCall('/api/leaderboard', 'GET', null, true);
+    if (!data || !data.leaderboard || data.leaderboard.length === 0) {
+      container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">No ranked players yet — play a game to join the board!</p>';
+      return;
+    }
+    container.innerHTML = '';
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'lb-row lb-header';
+    hdr.innerHTML = '<div>#</div><div>Operative</div><div>W</div><div>L</div><div>Win%</div>';
+    container.appendChild(hdr);
+    // Rows
+    data.leaderboard.forEach((p, i) => {
+      const row = document.createElement('div');
+      row.className = 'lb-row';
+      const rankClass = i < 3 ? 'lb-rank top-3' : 'lb-rank';
+      row.innerHTML = `
+        <div class="${rankClass}">${i + 1}</div>
+        <div class="lb-name">${p.username}</div>
+        <div class="lb-wins">${p.wins}</div>
+        <div class="lb-stat">${p.losses}</div>
+        <div class="lb-stat">${p.win_pct}%</div>
+      `;
+      container.appendChild(row);
+    });
+  } catch(e) {
+    container.innerHTML = '<p style="color:var(--text-muted); font-size:0.85rem; text-align:center; padding:12px;">Could not load leaderboard</p>';
+  }
+}
 </script>
 </body>
 </html>

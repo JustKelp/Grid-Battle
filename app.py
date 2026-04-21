@@ -1469,9 +1469,24 @@ def login():
         return jsonify({"error": "Too many requests. Please wait a minute."}), 429
     data = request.json or {}
     username, password = str(data.get("username", "")).strip(), str(data.get("password", "")).strip()
+    if not username: return jsonify({"error": "Username required."}), 400
+    if not password: return jsonify({"error": "Password required."}), 400
     user = get_user(username)
-    if not user or not check_password_hash(user["password_hash"], password):
-        return jsonify({"error": "Invalid username or password."}), 401
+    if not user: return jsonify({"error": "No account found with that username."}), 401
+    # Support both new werkzeug hashes and legacy SHA-256 for backward compat
+    stored = user["password_hash"]
+    if stored.startswith("pbkdf2:") or stored.startswith("scrypt:"):
+        valid = check_password_hash(stored, password)
+    else:
+        import hashlib
+        valid = stored == hashlib.sha256(password.encode()).hexdigest()
+        if valid:
+            # Silently upgrade to new hash on successful legacy login
+            con = sqlite3.connect(DB_PATH)
+            con.execute("UPDATE users SET password_hash=? WHERE id=?",
+                        (generate_password_hash(password), user["id"]))
+            con.commit(); con.close()
+    if not valid: return jsonify({"error": "Incorrect password."}), 401
     return jsonify({"ok": True, "user": _user_json(user)})
 
 @app.route("/api/auth/guest", methods=["POST"])
@@ -1516,6 +1531,37 @@ def update_mascot_route():
     update_mascot(user["id"], sport, mascot)
     updated = get_user(username)
     return jsonify({"ok": True, "user": _user_json(updated)})
+
+@app.route("/api/leaderboard", methods=["GET"])
+def leaderboard_route():
+    """Return top 20 players by wins, then best streak as tiebreaker."""
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    rows = con.execute("""
+        SELECT username, wins, losses, draws, lifetime_correct, lifetime_total,
+               win_streak, best_streak
+        FROM users
+        WHERE (wins + losses + draws) > 0
+        ORDER BY wins DESC, best_streak DESC, lifetime_correct DESC
+        LIMIT 20
+    """).fetchall()
+    con.close()
+    result = []
+    for r in rows:
+        total_games = r["wins"] + r["losses"] + r["draws"]
+        win_pct = round(r["wins"] / total_games * 100) if total_games > 0 else 0
+        guess_pct = round(r["lifetime_correct"] / r["lifetime_total"] * 100) if r["lifetime_total"] > 0 else 0
+        result.append({
+            "username": r["username"],
+            "wins": r["wins"],
+            "losses": r["losses"],
+            "draws": r["draws"],
+            "win_pct": win_pct,
+            "guess_pct": guess_pct,
+            "win_streak": r["win_streak"],
+            "best_streak": r["best_streak"],
+        })
+    return jsonify({"ok": True, "leaderboard": result})
 
 # ── GENERIC SPORT ROUTE HELPERS ──────────────────────────────────────────
 def _route_start(new_state_fn, serialise_fn):
@@ -1835,19 +1881,21 @@ def handle_join_game(data):
     Expects: {room_id, player2: {id, username, ...}}
     """
     if not isinstance(data, dict):
-        emit('error', {'message': 'Invalid data.'}); return
+        emit('error', {'message': 'Invalid request data.'}); return
     room_id = data.get('room_id')
     p2_data = data.get('player2')
-    if not room_id or not p2_data:
-        emit('error', {'message': 'room_id and player2 data required.'}); return
+    if not room_id:
+        emit('error', {'message': 'Enter a room code to join.'}); return
+    if not p2_data:
+        emit('error', {'message': 'Sign in before joining a room.'}); return
     s = get_room(room_id)
     if not s:
-        emit('error', {'message': 'Room not found.'}); return
+        emit('error', {'message': f'Room "{room_id}" not found. Check the code and try again.'}); return
     if not s.get('_waiting_for_p2'):
-        emit('error', {'message': 'Game already in progress.'}); return
+        emit('error', {'message': 'That game already has two players.'}); return
     u2 = _resolve_user(p2_data)
     if not u2:
-        emit('error', {'message': 'Player 2 account not found.'}); return
+        emit('error', {'message': 'Your account could not be found. Try logging in again.'}); return
     # Replace the placeholder P2 slot with the real player
     sport = s.get('sport', 'nfl')
     s["players"][2] = make_player_slot(u2, sport)
@@ -1957,4 +2005,4 @@ def handle_leave_room(data):
         emit('opponent_left', {'username': username}, room=room_id, include_self=False)
 
 if __name__ == "__main__":
-    socketio.run(app, host="127.0.0.1", port=5000, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
