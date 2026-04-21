@@ -549,13 +549,17 @@ def _build_team_index(players_db, key="teams"):
     return index
 
 def _build_stat_cache(players_db):
-    cache = {}
+    """Return (totals, counts) where totals[(team,stat)] = total qualifying seasons,
+    counts[(team,stat)] = number of unique qualifying players."""
+    totals = {}
+    counts = {}
     for p in players_db:
         for stat_key, team_dict in p.get("achievements", {}).items():
             if isinstance(team_dict, dict):
                 for team, count in team_dict.items():
-                    cache[(team, stat_key)] = cache.get((team, stat_key), 0) + count
-    return cache
+                    totals[(team, stat_key)] = totals.get((team, stat_key), 0) + count
+                    counts[(team, stat_key)] = counts.get((team, stat_key), 0) + 1
+    return totals, counts
 
 def _build_name_index(players_db):
     """Build a lowercase name -> player lookup for O(1) guess resolution."""
@@ -585,10 +589,10 @@ MLB_PLAYER_NAMES_SORTED  = sorted(p["name"] for p in MLB_PLAYERS_DB)
 NBA_PLAYER_NAMES_SORTED  = sorted(p["name"] for p in NBA_PLAYERS_DB)
 NHL_PLAYER_NAMES_SORTED  = sorted(p["name"] for p in NHL_PLAYERS_DB)
 
-_NFL_STAT_CACHE = _build_stat_cache(PLAYERS_DB)
-_MLB_STAT_CACHE = _build_stat_cache(MLB_PLAYERS_DB)
-_NBA_STAT_CACHE = _build_stat_cache(NBA_PLAYERS_DB)
-_NHL_STAT_CACHE = _build_stat_cache(NHL_PLAYERS_DB)
+_NFL_STAT_CACHE, _NFL_STAT_COUNT = _build_stat_cache(PLAYERS_DB)
+_MLB_STAT_CACHE, _MLB_STAT_COUNT = _build_stat_cache(MLB_PLAYERS_DB)
+_NBA_STAT_CACHE, _NBA_STAT_COUNT = _build_stat_cache(NBA_PLAYERS_DB)
+_NHL_STAT_CACHE, _NHL_STAT_COUNT = _build_stat_cache(NHL_PLAYERS_DB)
 
 NFL_NAME_INDEX = _build_name_index(PLAYERS_DB)
 MLB_NAME_INDEX = _build_name_index(MLB_PLAYERS_DB)
@@ -632,40 +636,85 @@ _MLB_CROSS_COUNT  = _precompute_crossover_counts(MLB_PLAYERS_DB)
 _NBA_CROSS_COUNT  = _precompute_crossover_counts(NBA_PLAYERS_DB)
 _NHL_CROSS_COUNT  = _precompute_crossover_counts(NHL_PLAYERS_DB)
 
-def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_count, stat_cache):
+_CURRENT_YEAR_RARITY = 2026  # Used for era adjustment in rarity calc
+
+def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_count, stat_total, stat_count):
+    """
+    Rarity formula:
+      Lower rarity = more obvious answer = better score for the guesser.
+      Higher rarity = deep cut = rare find (harder to steal).
+
+    Crossover cells: factors in games played + era (older = lower rarity).
+    Stat cells: factors in seasons completed + pool size + era.
+    """
+    debut = player.get("debut_year", 0)
+    try:
+        years_ago = max(0, _CURRENT_YEAR_RARITY - int(debut)) if debut else 0
+    except (TypeError, ValueError):
+        years_ago = 0
+
+    # ── STAT CATEGORY RARITY ───────────────────────────────
     if team_a.startswith("STAT:"):
         stat_key = team_a.split(":", 1)[1]
         p_seasons = player.get("achievements", {}).get(stat_key, {}).get(team_b, 0)
-        total_seasons = stat_cache.get((team_b, stat_key), 1)
-        if total_seasons <= 0: return 0.5
-        return round(max(0.01, min(1.0, p_seasons / total_seasons)), 4)
+        if p_seasons == 0: return 0.5
+        pool_total = stat_total.get((team_b, stat_key), 1)
+        pool_count = stat_count.get((team_b, stat_key), 1)
+        avg_seasons = pool_total / pool_count if pool_count > 0 else 1
+        # More seasons = more obvious = higher rarity
+        ratio = p_seasons / avg_seasons
+        base = 99 - 98 / (1 + max(0.01, ratio) ** 1.3)
+        # Bump rarity slightly for very small pools (hard to recall anyone)
+        if pool_count < 3:
+            base *= 1.1
+        elif pool_count < 6:
+            base *= 1.05
+        # Era reduction: older = less obvious
+        era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
+        rarity = base - era_reduction
+        return round(max(1, min(99, rarity)) / 100, 4)
+
+    # ── SAME-TEAM FALLBACK (shouldn't trigger with valid board) ──
     if team_a == team_b:
         g = player.get(games_key, {}).get(team_a, 0)
         key = (team_a, team_a)
         total = cross_total.get(key, 0)
         n = cross_count.get(key, 0)
         if total <= 0 or n <= 1: return 0.5
-        return round(max(0.01, min(1.0, math.tanh((g / total) * n * 0.8))), 4)
+        ratio = (g / total) * n if total > 0 else 0
+        rarity = 99 - 98 / (1 + max(0.01, ratio) ** 1.2)
+        era_reduction = min(25, (years_ago / 4) ** 0.85) if years_ago > 0 else 0
+        rarity -= era_reduction
+        return round(max(1, min(99, rarity)) / 100, 4)
+
+    # ── TEAM-TEAM CROSSOVER RARITY ─────────────────────────
     g_a = player.get(games_key, {}).get(team_a, 0)
     g_b = player.get(games_key, {}).get(team_b, 0)
     key = (min(team_a, team_b), max(team_a, team_b))
     total = cross_total.get(key, 0)
     n = cross_count.get(key, 0)
     if total <= 0 or n <= 1: return 0.5
-    proportion = (g_a + g_b) / total
-    return round(max(0.01, min(1.0, math.tanh(proportion * n * 0.7))), 4)
+    # Share of total crossover games, scaled by pool size
+    share = (g_a + g_b) / total
+    ratio = share * n  # 1.0 = average amount of playing time
+    # Smooth sigmoid: ratio=0→1, ratio=1→50, ratio=3→82, ratio=10→97
+    base = 99 - 98 / (1 + max(0.01, ratio) ** 1.2)
+    # Era reduction: older players score lower
+    era_reduction = min(25, (years_ago / 4) ** 0.85) if years_ago > 0 else 0
+    rarity = base - era_reduction
+    return round(max(1, min(99, rarity)) / 100, 4)
 
 def calc_rarity(player, team_a, team_b):
-    return _calc_rarity_common(player, team_a, team_b, "weeks_by_team", _NFL_CROSS_TOTAL, _NFL_CROSS_COUNT, _NFL_STAT_CACHE)
+    return _calc_rarity_common(player, team_a, team_b, "weeks_by_team", _NFL_CROSS_TOTAL, _NFL_CROSS_COUNT, _NFL_STAT_CACHE, _NFL_STAT_COUNT)
 
 def calc_mlb_rarity(player, team_a, team_b):
-    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _MLB_CROSS_TOTAL, _MLB_CROSS_COUNT, _MLB_STAT_CACHE)
+    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _MLB_CROSS_TOTAL, _MLB_CROSS_COUNT, _MLB_STAT_CACHE, _MLB_STAT_COUNT)
 
 def calc_nba_rarity(player, team_a, team_b):
-    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _NBA_CROSS_TOTAL, _NBA_CROSS_COUNT, _NBA_STAT_CACHE)
+    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _NBA_CROSS_TOTAL, _NBA_CROSS_COUNT, _NBA_STAT_CACHE, _NBA_STAT_COUNT)
 
 def calc_nhl_rarity(player, team_a, team_b):
-    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _NHL_CROSS_TOTAL, _NHL_CROSS_COUNT, _NHL_STAT_CACHE)
+    return _calc_rarity_common(player, team_a, team_b, "games_by_team", _NHL_CROSS_TOTAL, _NHL_CROSS_COUNT, _NHL_STAT_CACHE, _NHL_STAT_COUNT)
 
 # ── BOARD GENERATION ──────────────────────────────────────────────────────
 WIN_LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
