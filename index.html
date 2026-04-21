@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>StatCheck — Professional Grid Trivia</title>
+<title>StatCheck Game</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
@@ -1009,7 +1009,7 @@ input::placeholder { color: var(--text-dim); }
   <div class="header-left">
     <div class="logo-container" onclick="goHome()">
       <div class="logo">Stat<span>Check</span></div>
-      <div class="sub-brand" id="active-game-name">Professional Grid Trivia</div>
+      <div class="sub-brand" id="active-game-name">Powered by Teez</div>
     </div>
     <button class="btn-rules" onclick="showRules()" title="How to Play">?</button>
   </div>
@@ -1037,18 +1037,18 @@ input::placeholder { color: var(--text-dim); }
   </div>
 
   <div class="card">
-    <h2>Access Terminal</h2>
+    <h2>Login</h2>
     <div class="form-group">
       <input type="text" id="login-user" placeholder="Username" autocomplete="username">
     </div>
     <div class="form-group">
       <input type="password" id="login-pass" placeholder="Password" autocomplete="current-password">
     </div>
-    <button class="btn" style="width:100%" onclick="handleLogin()">Authenticate</button>
+    <button class="btn" style="width:100%" onclick="handleLogin()">Sign In</button>
     <div class="divider"></div>
     <div style="display:flex; justify-content:space-between; gap:12px;">
       <button class="btn btn-outline btn-small" style="flex:1" onclick="handleGuestLogin()">Play as Guest</button>
-      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Register</button>
+      <button class="btn btn-outline btn-small" style="flex:1" onclick="showScreen('screen-register')">Create Account</button>
     </div>
   </div>
 </div>
@@ -1068,31 +1068,31 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ LOBBY ═══════════════════════════ -->
 <div id="screen-lobby" class="screen">
-  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Discipline</h2>
+  <h2 style="font-family:'Oswald',sans-serif; letter-spacing:0.12em; color:var(--primary-gold); margin-bottom:6px; font-size:1.8rem;">Select Sport</h2>
   <p style="color:var(--text-muted); font-size:0.8rem; letter-spacing:0.2em; text-transform:uppercase; font-weight:600;">Choose Your Arena</p>
   <div class="lobby-grid">
     <div class="select-card" data-sport="nfl" onclick="selectSport('nfl')">
       <h3>Check Down</h3>
-      <p>Football Operations</p>
+      <p>NFL Grid</p>
     </div>
     <div class="select-card" data-sport="mlb" onclick="selectSport('mlb')">
       <h3>Check Swing</h3>
-      <p>Baseball Operations</p>
+      <p>MLB Grid</p>
     </div>
     <div class="select-card" data-sport="nba" onclick="selectSport('nba')">
       <h3>Hand Check</h3>
-      <p>Basketball Operations</p>
+      <p>NBA Grid</p>
     </div>
     <div class="select-card" data-sport="nhl" onclick="selectSport('nhl')">
       <h3>Cross Check</h3>
-      <p>Hockey Operations</p>
+      <p>NHL Grid</p>
     </div>
   </div>
 
   <!-- Leaderboard -->
   <div style="margin-top:40px; max-width:600px; margin-left:auto; margin-right:auto;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <h3 style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.1em; font-size:1.1rem;">Top Operatives</h3>
+      <h3 style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.1em; font-size:1.1rem;">T.E.E.Z Board</h3>
       <button class="btn btn-small btn-outline" onclick="loadLeaderboard()">Refresh</button>
     </div>
     <div id="leaderboard-list" style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.12); border-radius:var(--radius); padding:14px 18px;">
@@ -1286,7 +1286,7 @@ input::placeholder { color: var(--text-dim); }
 <div class="modal-overlay" id="search-modal" onclick="if(event.target===this) hideSearch()">
   <div class="search-container">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-      <h3 id="search-title">Select Operative</h3>
+      <h3 id="search-title">Find Player</h3>
       <button class="modal-close" onclick="hideSearch()">✕</button>
     </div>
     <div class="search-cell-context" id="search-context"></div>
@@ -2498,7 +2498,7 @@ async function loadLeaderboard() {
     // Header
     const hdr = document.createElement('div');
     hdr.className = 'lb-row lb-header';
-    hdr.innerHTML = '<div>#</div><div>Operative</div><div>W</div><div>L</div><div>Win%</div>';
+    hdr.innerHTML = '<div>#</div><div>Player</div><div>W</div><div>L</div><div>Win%</div>';
     container.appendChild(hdr);
     // Rows
     data.leaderboard.forEach((p, i) => {
