@@ -1379,9 +1379,14 @@ function initSocket() {
   });
   socket.on('rematch_accepted', (data) => {
     hideRematchPrompt();
+    hidePostgameWaiting();
     showToast('Rematch accepted!', 'success');
     if (data.state) {
       currentRoomId = data.room_id || currentRoomId;
+      // CRITICAL: join the new socket room so game_update events reach this client
+      if (currentRoomId && socket) {
+        socket.emit('join_room', {room_id: currentRoomId});
+      }
       previousBoard = {};
       updateGameState(data.state);
       showScreen('screen-game');
@@ -1408,6 +1413,10 @@ function initSocket() {
     if (data.state) {
       currentRoomId = data.room_id || currentRoomId;
       currentSport = data.sport || currentSport;
+      // CRITICAL: join the new socket room so game_update events reach this client
+      if (currentRoomId && socket) {
+        socket.emit('join_room', {room_id: currentRoomId});
+      }
       previousBoard = {};
       updateGameState(data.state);
       showScreen('screen-game');

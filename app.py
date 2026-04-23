@@ -1992,7 +1992,9 @@ def handle_rematch_accept(data):
     save_room(new_room_id, new_s)
     serialised = serialise_fn(new_s)
     serialised["room_id"] = new_room_id
+    # Subscribe the accepting player to the new room immediately
     sio_join_room(new_room_id)
+    # Notify BOTH players in the old room — clients will join_room on receipt
     socketio.emit('rematch_accepted', {'room_id': new_room_id, 'state': serialised}, room=room_id)
 
 @socketio.on('rematch_decline')
