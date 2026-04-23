@@ -955,12 +955,24 @@ def _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_d
         "player1": _slot_json(s["players"][1], s["board"]),
         "player2": _slot_json(s["players"][2], s["board"])
     }
+    # Attach best-possible answers when the game ends (for the end-screen reveal board)
+    if s.get("game_over") and s.get("_best_answers"):
+        serialised["best_answers"] = s["_best_answers"]
     return serialised
 
-def serialise_state(s):     return _serialise(s, TEAM_NAMES, TEAM_LOGOS, TEAM_MASCOTS, f"{NFL_START_YEAR}\u20132026")
-def mlb_serialise_state(s):  return _serialise(s, MLB_TEAM_NAMES, MLB_LOGOS, MLB_TEAM_MASCOTS, f"{MLB_START_YEAR}\u20132026")
-def nba_serialise_state(s):  return _serialise(s, NBA_TEAM_NAMES, NBA_LOGOS, NBA_TEAM_MASCOTS, f"{NBA_START_YEAR}\u20132026")
-def nhl_serialise_state(s):  return _serialise(s, NHL_TEAM_NAMES, NHL_LOGOS, NHL_TEAM_MASCOTS, f"{NHL_START_YEAR}\u20132026")
+def _serialise_with_best(s, team_names_map, team_logos_map, team_mascots_map, data_years_default, db, calc_fn):
+    """Serialise + compute best answers on first game-over call (cached after)."""
+    if s.get("game_over") and not s.get("_best_answers"):
+        try:
+            s["_best_answers"] = _find_best_answers_all_cells(s, db, calc_fn)
+        except Exception:
+            s["_best_answers"] = {}
+    return _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_default)
+
+def serialise_state(s):     return _serialise_with_best(s, TEAM_NAMES, TEAM_LOGOS, TEAM_MASCOTS, f"{NFL_START_YEAR}\u20132026", PLAYERS_DB, calc_rarity)
+def mlb_serialise_state(s):  return _serialise_with_best(s, MLB_TEAM_NAMES, MLB_LOGOS, MLB_TEAM_MASCOTS, f"{MLB_START_YEAR}\u20132026", MLB_PLAYERS_DB, calc_mlb_rarity)
+def nba_serialise_state(s):  return _serialise_with_best(s, NBA_TEAM_NAMES, NBA_LOGOS, NBA_TEAM_MASCOTS, f"{NBA_START_YEAR}\u20132026", NBA_PLAYERS_DB, calc_nba_rarity)
+def nhl_serialise_state(s):  return _serialise_with_best(s, NHL_TEAM_NAMES, NHL_LOGOS, NHL_TEAM_MASCOTS, f"{NHL_START_YEAR}\u20132026", NHL_PLAYERS_DB, calc_nhl_rarity)
 
 # ── HELPERS ───────────────────────────────────────────────────────────────
 def _switch_turn(s): s["turn"] = 2 if s["turn"] == 1 else 1
@@ -1215,6 +1227,45 @@ def _find_best_hint(s, db, calc_fn):
     if not candidates: return None, None
     candidates.sort(key=lambda x: x[0], reverse=True)
     return candidates[0][1], candidates[0][2]
+
+def _find_best_answers_all_cells(s, db, calc_fn):
+    """
+    For each cell on the board, find the single LOWEST-rarity (most obvious)
+    player that satisfies the row+col constraint. Used on the end screen
+    to show players what the 'easy' answer was for every cell.
+    Returns: {cell_idx_str: {"name": str, "rarity": float, "headshot": str, "position": str}}
+    """
+    result = {}
+    for cell_idx in range(9):
+        ri, ci = cell_idx // 3, cell_idx % 3
+        team_a, team_b = s["rows"][ri], s["cols"][ci]
+        best = None
+        best_rarity = 1.1  # higher than max
+        for p in db:
+            if p.get("position", "") in EXCLUDED_POSITIONS:
+                continue
+            if team_a.startswith("STAT:"):
+                stat_key = team_a.split(":", 1)[1]
+                if team_b not in p.get("teams", []):
+                    continue
+                if team_b not in p.get("achievements", {}).get(stat_key, []):
+                    continue
+                r = calc_fn(p, team_a, team_b)
+            else:
+                if team_a not in p.get("teams", []) or team_b not in p.get("teams", []):
+                    continue
+                r = calc_fn(p, team_a, team_b)
+            if r < best_rarity:
+                best_rarity = r
+                best = p
+        if best is not None:
+            result[str(cell_idx)] = {
+                "name": best["name"],
+                "rarity": round(best_rarity, 4),
+                "headshot": best.get("headshot", ""),
+                "position": best.get("position", ""),
+            }
+    return result
 
 def _do_hint(s, db, calc_fn, serialise_fn, sport):
     """Provide a hint to the current player — reveals a valid player for an open/stealable cell."""
@@ -1992,9 +2043,7 @@ def handle_rematch_accept(data):
     save_room(new_room_id, new_s)
     serialised = serialise_fn(new_s)
     serialised["room_id"] = new_room_id
-    # Subscribe the accepting player to the new room immediately
     sio_join_room(new_room_id)
-    # Notify BOTH players in the old room — clients will join_room on receipt
     socketio.emit('rematch_accepted', {'room_id': new_room_id, 'state': serialised}, room=room_id)
 
 @socketio.on('rematch_decline')

@@ -1228,11 +1228,20 @@ input::placeholder { color: var(--text-dim); }
 
 <!-- ═══════════════════════════ END SCREEN ══════════════════════ -->
 <div id="screen-end" class="screen">
-  <div class="card" style="text-align:center; max-width:620px;">
+  <div class="card" style="text-align:center; max-width:900px;">
     <h2 id="end-title" style="font-size:2.2rem; margin-bottom:8px;">Match Concluded</h2>
     <p id="end-reason" style="color:var(--text-muted); margin-bottom:20px; font-size:0.9rem; font-weight:600;"></p>
 
-    <div id="end-board-container"></div>
+    <div id="end-boards-wrap" style="display:flex; gap:20px; justify-content:center; align-items:flex-start; flex-wrap:wrap; margin-bottom:20px;">
+      <div style="flex:1; min-width:280px;">
+        <p style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">YOUR BOARD</p>
+        <div id="end-board-container"></div>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <p style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">MOST OBVIOUS ANSWERS</p>
+        <div id="end-reveal-container"></div>
+      </div>
+    </div>
 
     <div class="end-stats-row">
       <div>
@@ -1379,14 +1388,9 @@ function initSocket() {
   });
   socket.on('rematch_accepted', (data) => {
     hideRematchPrompt();
-    hidePostgameWaiting();
     showToast('Rematch accepted!', 'success');
     if (data.state) {
       currentRoomId = data.room_id || currentRoomId;
-      // CRITICAL: join the new socket room so game_update events reach this client
-      if (currentRoomId && socket) {
-        socket.emit('join_room', {room_id: currentRoomId});
-      }
       previousBoard = {};
       updateGameState(data.state);
       showScreen('screen-game');
@@ -1413,10 +1417,6 @@ function initSocket() {
     if (data.state) {
       currentRoomId = data.room_id || currentRoomId;
       currentSport = data.sport || currentSport;
-      // CRITICAL: join the new socket room so game_update events reach this client
-      if (currentRoomId && socket) {
-        socket.emit('join_room', {room_id: currentRoomId});
-      }
       previousBoard = {};
       updateGameState(data.state);
       showScreen('screen-game');
@@ -2474,6 +2474,88 @@ function buildEndBoard() {
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
+      }
+      wrap.appendChild(cell);
+    }
+  }
+  container.appendChild(wrap);
+  buildRevealBoard();
+}
+
+function buildRevealBoard() {
+  const container = document.getElementById('end-reveal-container');
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+  if (!gameState) return;
+
+  const best = gameState.best_answers || {};
+  const wrap = createEl('div', 'end-board-wrapper');
+
+  // Top-left empty
+  wrap.appendChild(createEl('div', 'grid-header'));
+
+  // Col headers
+  for (let c = 0; c < 3; c++) {
+    const hdr = createEl('div', 'grid-header');
+    const logo = gameState.col_logos[c];
+    const name = gameState.col_names[c];
+    if (logo) {
+      const img = document.createElement('img');
+      img.src = logo; img.alt = name;
+      hdr.appendChild(img);
+    } else {
+      const sp = document.createElement('span');
+      sp.textContent = name;
+      hdr.appendChild(sp);
+    }
+    wrap.appendChild(hdr);
+  }
+
+  // Rows
+  for (let r = 0; r < 3; r++) {
+    const rowHdr = createEl('div', 'grid-header');
+    const rowLogo = gameState.row_logos[r];
+    const rowName = gameState.row_names[r];
+    if (rowLogo) {
+      const img = document.createElement('img');
+      img.src = rowLogo; img.alt = rowName;
+      rowHdr.appendChild(img);
+    } else {
+      const sp = document.createElement('span');
+      sp.textContent = rowName;
+      rowHdr.appendChild(sp);
+    }
+    wrap.appendChild(rowHdr);
+
+    for (let c = 0; c < 3; c++) {
+      const idx = r * 3 + c;
+      const answer = best[idx.toString()];
+      const cell = createEl('div', 'grid-cell');
+      cell.style.borderColor = 'rgba(41,175,206,0.3)';
+
+      if (answer) {
+        const content = createEl('div', 'cell-content');
+        const nameDiv = createEl('div', 'cell-name');
+        nameDiv.textContent = answer.name;
+        nameDiv.style.color = 'var(--accent-cyan)';
+        const rarityDiv = createEl('div', 'cell-rarity');
+        rarityDiv.textContent = Math.round(answer.rarity * 100);
+        content.appendChild(nameDiv);
+        content.appendChild(rarityDiv);
+        cell.appendChild(content);
+        if (answer.headshot) {
+          const img = document.createElement('img');
+          img.src = answer.headshot;
+          img.alt = answer.name;
+          img.style.cssText = 'position:absolute; bottom:0; right:0; max-width:55%; max-height:55%; opacity:0.5; pointer-events:none;';
+          cell.appendChild(img);
+        }
+        cell.style.position = 'relative';
+      } else {
+        const empty = createEl('div', 'cell-content');
+        empty.textContent = '—';
+        empty.style.color = 'var(--text-muted)';
+        cell.appendChild(empty);
       }
       wrap.appendChild(cell);
     }
