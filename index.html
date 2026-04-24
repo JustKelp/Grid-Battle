@@ -1238,7 +1238,7 @@ input::placeholder { color: var(--text-dim); }
         <div id="end-board-container"></div>
       </div>
       <div style="flex:1; min-width:280px;">
-        <p style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">MOST OBVIOUS ANSWERS</p>
+        <p style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">MOST OBSCURE FINDS</p>
         <div id="end-reveal-container"></div>
       </div>
     </div>
@@ -1323,6 +1323,19 @@ input::placeholder { color: var(--text-dim); }
     <p>If both players have three-in-a-row simultaneously, a <span class="rule-highlight">5-turn sudden death</span> begins. The player with the lowest average rarity across their winning cells wins.</p>
     <h4>Alternate Win</h4>
     <p>After <span class="rule-highlight">5 consecutive misses</span> by both players, the game ends. Most squares wins. Tiebreak by total rarity (lower wins). Perfect tie = draw.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ PROFILE MODAL ═══════════════════ -->
+<div class="modal-overlay" id="profile-modal" onclick="if(event.target===this) hideProfile()">
+  <div class="rules-content" style="max-width:520px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h3 id="profile-title" style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.08em; font-size:1.4rem;">Profile</h3>
+      <button class="modal-close" onclick="hideProfile()">✕</button>
+    </div>
+    <div id="profile-body">
+      <p style="color:var(--text-muted); text-align:center; padding:20px;">Loading...</p>
+    </div>
   </div>
 </div>
 
@@ -1492,6 +1505,24 @@ function goHome() {
   showScreen('screen-lobby');
 }
 
+// Helper: is this cell a stat cell (row or col or both)?
+function cellIsStatCell(idx) {
+  if (!gameState) return false;
+  const r = Math.floor(idx / 3), c = idx % 3;
+  const rowItem = gameState.rows ? gameState.rows[r] : null;
+  const colItem = gameState.cols ? gameState.cols[c] : null;
+  return (rowItem && rowItem.startsWith('STAT:')) || (colItem && colItem.startsWith('STAT:'));
+}
+
+// Format rarity: 1 decimal for stat cells, whole number for team-team
+function formatCellRarity(rarity, idx) {
+  const val = rarity * 100;
+  if (cellIsStatCell(idx)) {
+    return val.toFixed(1);
+  }
+  return Math.round(val).toString();
+}
+
 function showToast(msg, type = 'default') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
@@ -1568,6 +1599,112 @@ function showRules() {
 }
 function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
+}
+
+// ── PROFILE MODAL ──────────────────────────────────────────────
+// Team codes → display names (for favorite team dropdown)
+const TEAM_CODES = {
+  nfl: {"ARI":"Cardinals","ATL":"Falcons","BAL":"Ravens","BUF":"Bills","CAR":"Panthers","CHI":"Bears","CIN":"Bengals","CLE":"Browns","DAL":"Cowboys","DEN":"Broncos","DET":"Lions","GB":"Packers","HOU":"Texans","IND":"Colts","JAX":"Jaguars","KC":"Chiefs","LAC":"Chargers","LAR":"Rams","LV":"Raiders","MIA":"Dolphins","MIN":"Vikings","NE":"Patriots","NO":"Saints","NYG":"Giants","NYJ":"Jets","PHI":"Eagles","PIT":"Steelers","SEA":"Seahawks","SF":"49ers","TB":"Buccaneers","TEN":"Titans","WAS":"Commanders"},
+  mlb: {"ARI":"Diamondbacks","ATL":"Braves","BAL":"Orioles","BOS":"Red Sox","CHC":"Cubs","CWS":"White Sox","CIN":"Reds","CLE":"Guardians","COL":"Rockies","DET":"Tigers","HOU":"Astros","KCR":"Royals","LAA":"Angels","LAD":"Dodgers","MIA":"Marlins","MIL":"Brewers","MIN":"Twins","NYM":"Mets","NYY":"Yankees","OAK":"Athletics","PHI":"Phillies","PIT":"Pirates","SDP":"Padres","SEA":"Mariners","SFG":"Giants","STL":"Cardinals","TBR":"Rays","TEX":"Rangers","TOR":"Blue Jays","WSN":"Nationals"},
+  nba: {"ATL":"Hawks","BOS":"Celtics","BKN":"Nets","CHA":"Hornets","CHI":"Bulls","CLE":"Cavaliers","DAL":"Mavericks","DEN":"Nuggets","DET":"Pistons","GSW":"Warriors","HOU":"Rockets","IND":"Pacers","LAC":"Clippers","LAL":"Lakers","MEM":"Grizzlies","MIA":"Heat","MIL":"Bucks","MIN":"Timberwolves","NOP":"Pelicans","NYK":"Knicks","OKC":"Thunder","ORL":"Magic","PHI":"76ers","PHX":"Suns","POR":"Trail Blazers","SAC":"Kings","SAS":"Spurs","TOR":"Raptors","UTA":"Jazz","WAS":"Wizards"},
+  nhl: {"ANA":"Ducks","BOS":"Bruins","BUF":"Sabres","CGY":"Flames","CAR":"Hurricanes","CHI":"Blackhawks","COL":"Avalanche","CBJ":"Blue Jackets","DAL":"Stars","DET":"Red Wings","EDM":"Oilers","FLA":"Panthers","LAK":"Kings","MIN":"Wild","MTL":"Canadiens","NSH":"Predators","NJD":"Devils","NYI":"Islanders","NYR":"Rangers","OTT":"Senators","PHI":"Flyers","PIT":"Penguins","SJS":"Sharks","SEA":"Kraken","STL":"Blues","TBL":"Lightning","TOR":"Maple Leafs","UTA":"Utah","VAN":"Canucks","VGK":"Golden Knights","WSH":"Capitals","WPG":"Jets"}
+};
+
+function showProfile(username) {
+  const targetUser = username || (currentUser && currentUser.username);
+  if (!targetUser) return;
+  const modal = document.getElementById('profile-modal');
+  const body = document.getElementById('profile-body');
+  document.getElementById('profile-title').textContent = targetUser.toUpperCase();
+  body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">Loading...</p>';
+  modal.classList.add('active');
+
+  const isSelf = currentUser && currentUser.username === targetUser;
+
+  apiCall(`/api/profile/${encodeURIComponent(targetUser)}`, 'GET', null, true)
+    .then(data => {
+      if (!data || !data.profile) {
+        body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">Profile not found</p>';
+        return;
+      }
+      const p = data.profile;
+      renderProfile(p, isSelf);
+    })
+    .catch(() => {
+      body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">Could not load profile</p>';
+    });
+}
+
+function renderProfile(p, isSelf) {
+  const body = document.getElementById('profile-body');
+  body.innerHTML = '';
+
+  // Stats grid
+  const stats = document.createElement('div');
+  stats.style.cssText = 'display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; text-align:center;';
+  const statPairs = [
+    ['Wins', p.wins], ['Losses', p.losses], ['Games', p.games_played],
+    ['Win %', p.win_pct + '%'], ['Hit %', p.hit_pct + '%'], ['Best Streak', p.best_streak]
+  ];
+  statPairs.forEach(([k, v]) => {
+    const c = document.createElement('div');
+    c.style.cssText = 'background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.12); border-radius:var(--radius); padding:10px 8px;';
+    c.innerHTML = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${k}</div><div style="color:var(--primary-gold); font-family:'Oswald',sans-serif; font-size:1.3rem; font-weight:700;">${v}</div>`;
+    stats.appendChild(c);
+  });
+  body.appendChild(stats);
+
+  // Favorite teams section
+  const favHdr = document.createElement('h4');
+  favHdr.style.cssText = 'font-family:Oswald,sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin:8px 0 10px; font-size:0.9rem;';
+  favHdr.textContent = 'Favorite Teams';
+  body.appendChild(favHdr);
+
+  const favGrid = document.createElement('div');
+  favGrid.style.cssText = 'display:grid; grid-template-columns:repeat(2,1fr); gap:10px;';
+  ['nfl','mlb','nba','nhl'].forEach(sport => {
+    const row = document.createElement('div');
+    row.style.cssText = 'background:rgba(0,0,0,0.2); border:1px solid rgba(207,196,147,0.08); border-radius:var(--radius); padding:8px 12px;';
+    const currentCode = p.mascots[sport];
+    const teams = TEAM_CODES[sport] || {};
+    const currentName = teams[currentCode] || currentCode;
+    if (isSelf) {
+      // Editable dropdown
+      let html = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${sport.toUpperCase()}</div>`;
+      html += `<select onchange="updateFavoriteTeam('${sport}', this.value)" style="background:var(--bg-darkest); color:var(--text-primary); border:1px solid rgba(207,196,147,0.2); padding:6px 8px; border-radius:var(--radius); font-family:Oswald,sans-serif; width:100%;">`;
+      Object.entries(teams).forEach(([code, name]) => {
+        html += `<option value="${code}"${code === currentCode ? ' selected' : ''}>${name}</option>`;
+      });
+      html += '</select>';
+      row.innerHTML = html;
+    } else {
+      row.innerHTML = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${sport.toUpperCase()}</div><div style="color:var(--primary-gold); font-family:Oswald,sans-serif; font-size:1rem;">${currentName}</div>`;
+    }
+    favGrid.appendChild(row);
+  });
+  body.appendChild(favGrid);
+}
+
+function hideProfile() {
+  document.getElementById('profile-modal').classList.remove('active');
+}
+
+async function updateFavoriteTeam(sport, mascot) {
+  if (!currentUser) return;
+  try {
+    const data = await apiCall('/api/auth/mascot', 'POST', {
+      username: currentUser.username,
+      sport: sport,
+      mascot: mascot
+    });
+    if (data && data.user) {
+      currentUser = data.user;
+      saveSession();
+      showToast('Favorite team updated', 'success');
+    }
+  } catch(e) {
+    showToast('Could not update team', 'error');
+  }
 }
 
 // ── AUTHENTICATION ─────────────────────────────────────────────
@@ -1969,7 +2106,7 @@ function renderBoard(oldBoard) {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = formatCellRarity(cellData.rarity, idx);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2274,10 +2411,10 @@ function openSearch(idx) {
     const currentTurn = gameState.turn;
     if (cellData.owner_turn === currentTurn) {
       titleEl.textContent = 'Upgrade Cell';
-      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)}) \u2014 Beat this rarity`;
+      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${formatCellRarity(cellData.rarity, idx)}) \u2014 Beat this rarity`;
     } else {
       titleEl.textContent = 'Steal Attempt';
-      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)})`;
+      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${formatCellRarity(cellData.rarity, idx)})`;
     }
   } else {
     titleEl.textContent = 'Select Player';
@@ -2470,7 +2607,7 @@ function buildEndBoard() {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = formatCellRarity(cellData.rarity, idx);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2539,7 +2676,7 @@ function buildRevealBoard() {
         nameDiv.textContent = answer.name;
         nameDiv.style.color = 'var(--accent-cyan)';
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(answer.rarity * 100);
+        rarityDiv.textContent = formatCellRarity(answer.rarity, idx);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2568,6 +2705,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
+    if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
   }
 });
 
@@ -2595,6 +2733,9 @@ async function loadLeaderboard() {
     data.leaderboard.forEach((p, i) => {
       const row = document.createElement('div');
       row.className = 'lb-row';
+      row.style.cursor = 'pointer';
+      row.title = 'Click to view profile';
+      row.onclick = () => showProfile(p.username);
       const rankClass = i < 3 ? 'lb-rank top-3' : 'lb-rank';
       row.innerHTML = `
         <div class="${rankClass}">${i + 1}</div>
