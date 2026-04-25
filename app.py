@@ -654,6 +654,21 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
         years_ago = 0
 
     # ── STAT CATEGORY RARITY ───────────────────────────────
+    # ── STAT × STAT CELL (both axes are stats) ──
+    if team_a.startswith("STAT:") and team_b.startswith("STAT:"):
+        sk_a = team_a.split(":", 1)[1]
+        sk_b = team_b.split(":", 1)[1]
+        ach = player.get("achievements", {})
+        seasons_a = sum(ach.get(sk_a, {}).values()) if isinstance(ach.get(sk_a), dict) else 0
+        seasons_b = sum(ach.get(sk_b, {}).values()) if isinstance(ach.get(sk_b), dict) else 0
+        if seasons_a == 0 or seasons_b == 0: return 0.5
+        # Combined seasons drives rarity — more = more obvious
+        combined = min(seasons_a, seasons_b)
+        base = 99 - 98 / (1 + max(0.01, combined / 2.0) ** 1.2)
+        era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
+        rarity = base - era_reduction
+        return round(max(1, min(99, rarity)) / 100, 4)
+
     if team_a.startswith("STAT:"):
         stat_key = team_a.split(":", 1)[1]
         p_seasons = player.get("achievements", {}).get(stat_key, {}).get(team_b, 0)
@@ -661,15 +676,30 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
         pool_total = stat_total.get((team_b, stat_key), 1)
         pool_count = stat_count.get((team_b, stat_key), 1)
         avg_seasons = pool_total / pool_count if pool_count > 0 else 1
-        # More seasons = more obvious = higher rarity
         ratio = p_seasons / avg_seasons
         base = 99 - 98 / (1 + max(0.01, ratio) ** 1.3)
-        # Bump rarity slightly for very small pools (hard to recall anyone)
         if pool_count < 3:
             base *= 1.1
         elif pool_count < 6:
             base *= 1.05
-        # Era reduction: older = less obvious
+        era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
+        rarity = base - era_reduction
+        return round(max(1, min(99, rarity)) / 100, 4)
+
+    # Stat in column (team in row)
+    if team_b.startswith("STAT:"):
+        stat_key = team_b.split(":", 1)[1]
+        p_seasons = player.get("achievements", {}).get(stat_key, {}).get(team_a, 0)
+        if p_seasons == 0: return 0.5
+        pool_total = stat_total.get((team_a, stat_key), 1)
+        pool_count = stat_count.get((team_a, stat_key), 1)
+        avg_seasons = pool_total / pool_count if pool_count > 0 else 1
+        ratio = p_seasons / avg_seasons
+        base = 99 - 98 / (1 + max(0.01, ratio) ** 1.3)
+        if pool_count < 3:
+            base *= 1.1
+        elif pool_count < 6:
+            base *= 1.05
         era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
         rarity = base - era_reduction
         return round(max(1, min(99, rarity)) / 100, 4)
@@ -729,10 +759,17 @@ def pick_teams_with_shared_players(pool, index, needed=3, attempts=100):
         if valid: return sample
     return random.sample(pool, needed)
 
-def _stat_row_has_valid_cells(stat_key, cols, db):
-    for team_b in cols:
-        if not any(team_b in p.get("teams", []) and team_b in p.get("achievements", {}).get(stat_key, []) for p in db):
-            return False
+def _stat_axis_has_valid_cells(stat_key, opposing_axis, players_db):
+    """Each cell on the opposing axis must have at least one valid player.
+    Opposing axis can mix team codes and STAT: entries (for stat-vs-stat cells)."""
+    for item in opposing_axis:
+        if item.startswith("STAT:"):
+            other_key = item.split(":", 1)[1]
+            if not any(stat_key in p.get("achievements", {}) and other_key in p.get("achievements", {}) for p in players_db):
+                return False
+        else:
+            if not any(item in p.get("teams", []) and item in p.get("achievements", {}).get(stat_key, []) for p in players_db):
+                return False
     return True
 
 def _new_board_common(teams, team_index, stat_categories, players_db):
@@ -741,22 +778,27 @@ def _new_board_common(teams, team_index, stat_categories, players_db):
     att = 0
     while set(rows) & set(cols) and att < 50:
         cols = pick_teams_with_shared_players(teams, team_index); att += 1
-    stat_metas = {}  # {stat_key: {key, label, desc}}
-    # Randomly decide 0, 1, or 2 stat rows
+    stat_metas = {}
     num_stats = random.choices([0, 1, 2], weights=[20, 55, 25], k=1)[0]
     if num_stats == 0 or not stat_categories:
         return rows, cols, stat_metas
-    # Choose random row positions for stat rows
-    positions = random.sample([0, 1, 2], num_stats)
+    # Each stat can land on a row OR a column slot, max 2 total
+    avail = [("row", 0), ("row", 1), ("row", 2), ("col", 0), ("col", 1), ("col", 2)]
+    random.shuffle(avail)
+    placements = avail[:num_stats]
     cats = list(stat_categories); random.shuffle(cats)
-    for pos in positions:
+    for axis, pos in placements:
         for cat in cats:
             if cat["key"] in stat_metas:
                 continue
             if sum(1 for p in players_db if cat["key"] in p.get("achievements", {})) < 10:
                 continue
-            if _stat_row_has_valid_cells(cat["key"], cols, players_db):
-                rows[pos] = f"STAT:{cat['key']}"
+            opposing = list(cols) if axis == "row" else list(rows)
+            if _stat_axis_has_valid_cells(cat["key"], opposing, players_db):
+                if axis == "row":
+                    rows[pos] = f"STAT:{cat['key']}"
+                else:
+                    cols[pos] = f"STAT:{cat['key']}"
                 stat_metas[cat["key"]] = {"key": cat["key"], "label": cat["label"], "desc": cat["desc"]}
                 break
     return rows, cols, stat_metas
@@ -937,13 +979,11 @@ def _serialise(s, team_names_map, team_logos_map, team_mascots_map, data_years_d
             return cat.get("label", stat_key)
         return team_names_map.get(t, t)
     def _axis_logo(t):
-        # Stats have no logo — frontend will render the label as text instead
         if t.startswith("STAT:"): return ""
         return team_logos_map.get(t, "")
     def _axis_mascot(t):
         if t.startswith("STAT:"): return ""
         return team_mascots_map.get(t, "")
-    # Convert used_players set to list for JSON safety
     serialised = {
         "room_id": s.get("room_id"),
         "sport": s.get("sport", "nfl"),
@@ -1112,7 +1152,18 @@ def _do_guess(s, db, calc_fn, serialise_fn, team_names_map, aliases, correct_phr
     if player["name"].lower() in {n.lower() for n in s["used_players"]}:
         return _make_miss(s, "already_used", f"{player['name']} has already been used this game.", serialise_fn, win_phrases)
 
-    if team_a.startswith("STAT:"):
+    if team_a.startswith("STAT:") and team_b.startswith("STAT:"):
+        sk_a = team_a.split(":", 1)[1]
+        sk_b = team_b.split(":", 1)[1]
+        ach = player.get("achievements", {})
+        cats = s.get("stat_categories", {})
+        if sk_a not in ach:
+            cat = cats.get(sk_a, {})
+            return _make_miss(s, "wrong_stat", f"{player['name']} never achieved {cat.get('label', sk_a)}.", serialise_fn, win_phrases)
+        if sk_b not in ach:
+            cat = cats.get(sk_b, {})
+            return _make_miss(s, "wrong_stat", f"{player['name']} never achieved {cat.get('label', sk_b)}.", serialise_fn, win_phrases)
+    elif team_a.startswith("STAT:"):
         stat_key = team_a.split(":", 1)[1]
         if team_b not in player.get("teams", []):
             return _make_miss(s, "wrong_team", f"{player['name']} didn't play for {team_names_map.get(team_b, team_b)}.", serialise_fn, win_phrases)
@@ -1120,6 +1171,14 @@ def _do_guess(s, db, calc_fn, serialise_fn, team_names_map, aliases, correct_phr
             cats = s.get("stat_categories", {})
             cat = cats.get(stat_key, {})
             return _make_miss(s, "wrong_team", f"{player['name']} didn't achieve {cat.get('label', stat_key)} with {team_names_map.get(team_b, team_b)}.", serialise_fn, win_phrases)
+    elif team_b.startswith("STAT:"):
+        stat_key = team_b.split(":", 1)[1]
+        if team_a not in player.get("teams", []):
+            return _make_miss(s, "wrong_team", f"{player['name']} didn't play for {team_names_map.get(team_a, team_a)}.", serialise_fn, win_phrases)
+        if team_a not in player.get("achievements", {}).get(stat_key, []):
+            cats = s.get("stat_categories", {})
+            cat = cats.get(stat_key, {})
+            return _make_miss(s, "wrong_team", f"{player['name']} didn't achieve {cat.get('label', stat_key)} with {team_names_map.get(team_a, team_a)}.", serialise_fn, win_phrases)
     elif team_a not in player.get("teams", []) or team_b not in player.get("teams", []):
         return _make_miss(s, "wrong_team", f"{player['name']} didn't play for both {team_names_map.get(team_a, team_a)} and {team_names_map.get(team_b, team_b)}.", serialise_fn, win_phrases)
 
@@ -1218,11 +1277,22 @@ def _find_best_hint(s, db, calc_fn):
         for p in db:
             if p["name"] in s["used_players"] or p.get("position", "") in EXCLUDED_POSITIONS:
                 continue
-            if team_a.startswith("STAT:"):
+            if team_a.startswith("STAT:") and team_b.startswith("STAT:"):
+                sk_a = team_a.split(":", 1)[1]
+                sk_b = team_b.split(":", 1)[1]
+                ach = p.get("achievements", {})
+                if sk_a not in ach or sk_b not in ach:
+                    continue
+                r = calc_fn(p, team_a, team_b)
+            elif team_a.startswith("STAT:"):
                 stat_key = team_a.split(":", 1)[1]
                 if team_b not in p.get("teams", []) or team_b not in p.get("achievements", {}).get(stat_key, []):
                     continue
-                # BUG FIX: pass team_a (with STAT: prefix), team_b — not team_b, team_b
+                r = calc_fn(p, team_a, team_b)
+            elif team_b.startswith("STAT:"):
+                stat_key = team_b.split(":", 1)[1]
+                if team_a not in p.get("teams", []) or team_a not in p.get("achievements", {}).get(stat_key, []):
+                    continue
                 r = calc_fn(p, team_a, team_b)
             else:
                 if team_a not in p.get("teams", []) or team_b not in p.get("teams", []):
@@ -1237,32 +1307,39 @@ def _find_best_hint(s, db, calc_fn):
 
 def _find_best_answers_all_cells(s, db, calc_fn):
     """
-    For each cell on the board, find the single LOWEST-rarity (most obvious)
+    For each cell on the board, find the HIGHEST-rarity (rarest/most obscure)
     player that satisfies the row+col constraint. Used on the end screen
-    to show players what the 'easy' answer was for every cell.
-    Returns: {cell_idx_str: {"name": str, "rarity": float, "headshot": str, "position": str}}
+    to show players the deepest cut they could have named.
     """
     result = {}
     for cell_idx in range(9):
         ri, ci = cell_idx // 3, cell_idx % 3
         team_a, team_b = s["rows"][ri], s["cols"][ci]
+        a_is_stat = team_a.startswith("STAT:")
+        b_is_stat = team_b.startswith("STAT:")
         best = None
-        best_rarity = 1.1  # higher than max
+        best_rarity = -1.0  # lower than any valid rarity — we want HIGHEST
         for p in db:
-            if p.get("position", "") in EXCLUDED_POSITIONS:
-                continue
-            if team_a.startswith("STAT:"):
-                stat_key = team_a.split(":", 1)[1]
-                if team_b not in p.get("teams", []):
-                    continue
-                if team_b not in p.get("achievements", {}).get(stat_key, []):
-                    continue
+            if a_is_stat and b_is_stat:
+                sk_a = team_a.split(":", 1)[1]
+                sk_b = team_b.split(":", 1)[1]
+                ach = p.get("achievements", {})
+                if sk_a not in ach or sk_b not in ach: continue
+                r = calc_fn(p, team_a, team_b)
+            elif a_is_stat:
+                sk = team_a.split(":", 1)[1]
+                if team_b not in p.get("teams", []): continue
+                if team_b not in p.get("achievements", {}).get(sk, []): continue
+                r = calc_fn(p, team_a, team_b)
+            elif b_is_stat:
+                sk = team_b.split(":", 1)[1]
+                if team_a not in p.get("teams", []): continue
+                if team_a not in p.get("achievements", {}).get(sk, []): continue
                 r = calc_fn(p, team_a, team_b)
             else:
-                if team_a not in p.get("teams", []) or team_b not in p.get("teams", []):
-                    continue
+                if team_a not in p.get("teams", []) or team_b not in p.get("teams", []): continue
                 r = calc_fn(p, team_a, team_b)
-            if r < best_rarity:
+            if r > best_rarity:
                 best_rarity = r
                 best = p
         if best is not None:
@@ -1403,11 +1480,21 @@ def _bot_pick_move(s, db, calc_fn, difficulty):
         for p in db:
             if p["name"] in s["used_players"]: continue
             if p.get("position", "") in EXCLUDED_POSITIONS: continue
-            if ta.startswith("STAT:"):
+            if ta.startswith("STAT:") and tb.startswith("STAT:"):
+                sk_a = ta.split(":", 1)[1]
+                sk_b = tb.split(":", 1)[1]
+                ach = p.get("achievements", {})
+                if sk_a not in ach or sk_b not in ach: continue
+                r = calc_fn(p, ta, tb)
+            elif ta.startswith("STAT:"):
                 sk = ta.split(":", 1)[1]
                 if tb not in p.get("teams", []): continue
                 if tb not in p.get("achievements", {}).get(sk, []): continue
-                # BUG FIX: pass ta (with STAT: prefix), tb — not tb, tb
+                r = calc_fn(p, ta, tb)
+            elif tb.startswith("STAT:"):
+                sk = tb.split(":", 1)[1]
+                if ta not in p.get("teams", []): continue
+                if ta not in p.get("achievements", {}).get(sk, []): continue
                 r = calc_fn(p, ta, tb)
             else:
                 if ta not in p.get("teams", []) or tb not in p.get("teams", []): continue
@@ -1669,6 +1756,37 @@ def leaderboard_route():
             "best_streak": r["best_streak"],
         })
     return jsonify({"ok": True, "leaderboard": result})
+
+@app.route("/api/profile/<username>", methods=["GET"])
+def profile_route(username):
+    """Public profile: favorite teams + stats + games played."""
+    user = get_user(username)
+    if not user:
+        return jsonify({"error": "User not found."}), 404
+    total_games = (user.get("wins") or 0) + (user.get("losses") or 0) + (user.get("draws") or 0)
+    win_pct = round((user.get("wins") or 0) / total_games * 100) if total_games > 0 else 0
+    lt = user.get("lifetime_total") or 0
+    hit_pct = round((user.get("lifetime_correct") or 0) / lt * 100) if lt > 0 else 0
+    return jsonify({
+        "ok": True,
+        "profile": {
+            "username": user["username"],
+            "wins": user.get("wins") or 0,
+            "losses": user.get("losses") or 0,
+            "draws": user.get("draws") or 0,
+            "games_played": total_games,
+            "win_pct": win_pct,
+            "hit_pct": hit_pct,
+            "win_streak": user.get("win_streak") or 0,
+            "best_streak": user.get("best_streak") or 0,
+            "mascots": {
+                "nfl": user.get("nfl_mascot") or "KC",
+                "mlb": user.get("mlb_mascot") or "NYY",
+                "nba": user.get("nba_mascot") or "LAL",
+                "nhl": user.get("nhl_mascot") or "BOS",
+            }
+        }
+    })
 
 # ── GENERIC SPORT ROUTE HELPERS ──────────────────────────────────────────
 def _route_start(new_state_fn, serialise_fn):

@@ -1238,7 +1238,7 @@ input::placeholder { color: var(--text-dim); }
         <div id="end-board-container"></div>
       </div>
       <div style="flex:1; min-width:280px;">
-        <p style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">MOST OBSCURE FINDS</p>
+        <p style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin-bottom:8px; font-size:0.85rem;">MOST OBVIOUS ANSWERS</p>
         <div id="end-reveal-container"></div>
       </div>
     </div>
@@ -1505,24 +1505,6 @@ function goHome() {
   showScreen('screen-lobby');
 }
 
-// Helper: is this cell a stat cell (row or col or both)?
-function cellIsStatCell(idx) {
-  if (!gameState) return false;
-  const r = Math.floor(idx / 3), c = idx % 3;
-  const rowItem = gameState.rows ? gameState.rows[r] : null;
-  const colItem = gameState.cols ? gameState.cols[c] : null;
-  return (rowItem && rowItem.startsWith('STAT:')) || (colItem && colItem.startsWith('STAT:'));
-}
-
-// Format rarity: 1 decimal for stat cells, whole number for team-team
-function formatCellRarity(rarity, idx) {
-  const val = rarity * 100;
-  if (cellIsStatCell(idx)) {
-    return val.toFixed(1);
-  }
-  return Math.round(val).toString();
-}
-
 function showToast(msg, type = 'default') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
@@ -1602,7 +1584,6 @@ function hideRules() {
 }
 
 // ── PROFILE MODAL ──────────────────────────────────────────────
-// Team codes → display names (for favorite team dropdown)
 const TEAM_CODES = {
   nfl: {"ARI":"Cardinals","ATL":"Falcons","BAL":"Ravens","BUF":"Bills","CAR":"Panthers","CHI":"Bears","CIN":"Bengals","CLE":"Browns","DAL":"Cowboys","DEN":"Broncos","DET":"Lions","GB":"Packers","HOU":"Texans","IND":"Colts","JAX":"Jaguars","KC":"Chiefs","LAC":"Chargers","LAR":"Rams","LV":"Raiders","MIA":"Dolphins","MIN":"Vikings","NE":"Patriots","NO":"Saints","NYG":"Giants","NYJ":"Jets","PHI":"Eagles","PIT":"Steelers","SEA":"Seahawks","SF":"49ers","TB":"Buccaneers","TEN":"Titans","WAS":"Commanders"},
   mlb: {"ARI":"Diamondbacks","ATL":"Braves","BAL":"Orioles","BOS":"Red Sox","CHC":"Cubs","CWS":"White Sox","CIN":"Reds","CLE":"Guardians","COL":"Rockies","DET":"Tigers","HOU":"Astros","KCR":"Royals","LAA":"Angels","LAD":"Dodgers","MIA":"Marlins","MIL":"Brewers","MIN":"Twins","NYM":"Mets","NYY":"Yankees","OAK":"Athletics","PHI":"Phillies","PIT":"Pirates","SDP":"Padres","SEA":"Mariners","SFG":"Giants","STL":"Cardinals","TBR":"Rays","TEX":"Rangers","TOR":"Blue Jays","WSN":"Nationals"},
@@ -1627,8 +1608,7 @@ function showProfile(username) {
         body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">Profile not found</p>';
         return;
       }
-      const p = data.profile;
-      renderProfile(p, isSelf);
+      renderProfile(data.profile, isSelf);
     })
     .catch(() => {
       body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">Could not load profile</p>';
@@ -1639,7 +1619,6 @@ function renderProfile(p, isSelf) {
   const body = document.getElementById('profile-body');
   body.innerHTML = '';
 
-  // Stats grid
   const stats = document.createElement('div');
   stats.style.cssText = 'display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px; text-align:center;';
   const statPairs = [
@@ -1654,9 +1633,8 @@ function renderProfile(p, isSelf) {
   });
   body.appendChild(stats);
 
-  // Favorite teams section
   const favHdr = document.createElement('h4');
-  favHdr.style.cssText = 'font-family:Oswald,sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin:8px 0 10px; font-size:0.9rem;';
+  favHdr.style.cssText = "font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; margin:8px 0 10px; font-size:0.9rem;";
   favHdr.textContent = 'Favorite Teams';
   body.appendChild(favHdr);
 
@@ -1669,16 +1647,15 @@ function renderProfile(p, isSelf) {
     const teams = TEAM_CODES[sport] || {};
     const currentName = teams[currentCode] || currentCode;
     if (isSelf) {
-      // Editable dropdown
       let html = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${sport.toUpperCase()}</div>`;
-      html += `<select onchange="updateFavoriteTeam('${sport}', this.value)" style="background:var(--bg-darkest); color:var(--text-primary); border:1px solid rgba(207,196,147,0.2); padding:6px 8px; border-radius:var(--radius); font-family:Oswald,sans-serif; width:100%;">`;
+      html += `<select onchange="updateFavoriteTeam('${sport}', this.value)" style="background:var(--bg-darkest); color:var(--text-primary); border:1px solid rgba(207,196,147,0.2); padding:6px 8px; border-radius:var(--radius); font-family:'Oswald',sans-serif; width:100%;">`;
       Object.entries(teams).forEach(([code, name]) => {
         html += `<option value="${code}"${code === currentCode ? ' selected' : ''}>${name}</option>`;
       });
       html += '</select>';
       row.innerHTML = html;
     } else {
-      row.innerHTML = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${sport.toUpperCase()}</div><div style="color:var(--primary-gold); font-family:Oswald,sans-serif; font-size:1rem;">${currentName}</div>`;
+      row.innerHTML = `<div style="color:var(--text-muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${sport.toUpperCase()}</div><div style="color:var(--primary-gold); font-family:'Oswald',sans-serif; font-size:1rem;">${currentName}</div>`;
     }
     favGrid.appendChild(row);
   });
@@ -2106,7 +2083,7 @@ function renderBoard(oldBoard) {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = formatCellRarity(cellData.rarity, idx);
+        rarityDiv.textContent = Math.round(cellData.rarity * 100);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2411,10 +2388,10 @@ function openSearch(idx) {
     const currentTurn = gameState.turn;
     if (cellData.owner_turn === currentTurn) {
       titleEl.textContent = 'Upgrade Cell';
-      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${formatCellRarity(cellData.rarity, idx)}) \u2014 Beat this rarity`;
+      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)}) \u2014 Beat this rarity`;
     } else {
       titleEl.textContent = 'Steal Attempt';
-      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${formatCellRarity(cellData.rarity, idx)})`;
+      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)})`;
     }
   } else {
     titleEl.textContent = 'Select Player';
@@ -2607,7 +2584,7 @@ function buildEndBoard() {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = formatCellRarity(cellData.rarity, idx);
+        rarityDiv.textContent = Math.round(cellData.rarity * 100);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2676,7 +2653,7 @@ function buildRevealBoard() {
         nameDiv.textContent = answer.name;
         nameDiv.style.color = 'var(--accent-cyan)';
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = formatCellRarity(answer.rarity, idx);
+        rarityDiv.textContent = Math.round(answer.rarity * 100);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
