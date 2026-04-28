@@ -120,12 +120,12 @@ header {
 
 .btn-rules {
   background: none; border: 1px solid var(--border-gold);
-  color: var(--text-muted); width:32px; height:32px;
-  border-radius: 50%; cursor:pointer; font-family:'Oswald',sans-serif;
-  font-size:1rem; font-weight:700; transition: all 0.2s;
-  display:flex; align-items:center; justify-content:center;
+  color: var(--text-muted); padding: 6px 14px;
+  border-radius: var(--radius); cursor:pointer; font-family:'Oswald',sans-serif;
+  font-size:0.78rem; font-weight:600; letter-spacing: 0.08em; text-transform: uppercase;
+  transition: all 0.2s;
 }
-.btn-rules:hover { border-color: var(--primary-gold); color: var(--primary-gold); }
+.btn-rules:hover { border-color: var(--primary-gold); color: var(--primary-gold); background: rgba(207,196,147,0.08); }
 
 /* ═══════════════════════════════════════════════════════
    BUTTONS & INPUTS
@@ -1011,12 +1011,12 @@ input::placeholder { color: var(--text-dim); }
       <div class="logo">Stat<span>Check</span></div>
       <div class="sub-brand" id="active-game-name">Powered by Teez</div>
     </div>
-    <button class="btn-rules" onclick="showRules()" title="How to Play">?</button>
+    <button class="btn-rules" onclick="showRules()" title="How to Play">How to Play</button>
   </div>
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
-    <div id="header-user-info" onclick="showProfile()" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em; cursor:pointer;"></div>
-    <button class="btn btn-small btn-outline btn-danger" id="btn-logout" onclick="handleLogout()" style="display:none; margin-left:10px;">Logout</button>
+    <div id="header-user-info" onclick="showProfile()" title="Click to view your profile and change favorite teams" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em; cursor:pointer; padding:6px 12px; border:1px solid rgba(207,196,147,0.3); border-radius:var(--radius); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary-gold)'; this.style.background='rgba(207,196,147,0.08)';" onmouseout="this.style.borderColor='rgba(207,196,147,0.3)'; this.style.background='transparent';"></div>
+    <button class="btn btn-small btn-outline btn-danger" id="btn-logout" onclick="handleLogout()" style="display:none; margin-left:18px;">Logout</button>
   </div>
 </header>
 
@@ -1620,13 +1620,13 @@ function updateHeaderUser() {
   const logoutBtn = document.getElementById('btn-logout');
   if (currentUser && !currentUser.is_guest) {
     btn.style.display = 'none';
-    info.style.display = 'block';
-    info.textContent = `OP: ${currentUser.username.toUpperCase()}`;
+    info.style.display = 'inline-block';
+    info.innerHTML = `OP: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
   } else if (currentUser && currentUser.is_guest) {
     btn.style.display = 'none';
-    info.style.display = 'block';
-    info.textContent = `GUEST: ${currentUser.username.toUpperCase()}`;
+    info.style.display = 'inline-block';
+    info.innerHTML = `GUEST: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
   } else {
     btn.style.display = 'block';
