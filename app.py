@@ -1148,6 +1148,8 @@ def _do_guess(s, db, calc_fn, serialise_fn, team_names_map, aliases, correct_phr
     current_turn = s["turn"]
     slot = s["players"][current_turn]
     uid = slot["user_id"]
+    # Voluntary action — reset AFK timeout counter
+    slot["consecutive_timeouts"] = 0
 
     if player["name"].lower() in {n.lower() for n in s["used_players"]}:
         return _make_miss(s, "already_used", f"{player['name']} has already been used this game.", serialise_fn, win_phrases)
@@ -1393,10 +1395,45 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
         "state": serialised
     })
 
-def _do_pass(s, serialise_fn, win_phrases):
-    """Current player passes their turn without guessing."""
+def _do_pass(s, serialise_fn, win_phrases, is_timeout=False):
+    """Current player passes their turn without guessing.
+    is_timeout=True means the pass was triggered by the 90s timer, not a manual click.
+    Two consecutive timeouts kicks the player from the game (forfeit-style)."""
     if s["game_over"]:
         return jsonify({"error": "Game is already over."}), 400
+
+    current_turn = s["turn"]
+    slot = s["players"][current_turn]
+    timeouts = slot.get("consecutive_timeouts", 0)
+    if is_timeout:
+        timeouts += 1
+        slot["consecutive_timeouts"] = timeouts
+        # AFK kick on second consecutive timeout
+        if timeouts >= 2:
+            winner_turn = 2 if current_turn == 1 else 1
+            wname = s["players"][winner_turn]["username"]
+            fname = slot["username"]
+            s["game_over"] = True
+            s["winner"] = winner_turn
+            s["win_reason"] = f"{fname} kicked for inactivity — {wname} wins!"
+            _flush_stats(s, winner_turn)
+            room_id = s.get("room_id")
+            serialised = serialise_fn(s)
+            if room_id:
+                save_room(room_id, s)
+                _emit_update(room_id, serialised)
+            return jsonify({
+                "result": "afk_kicked",
+                "message": s["win_reason"],
+                "game_over": True,
+                "winner": winner_turn,
+                "win_reason": s["win_reason"],
+                "state": serialised
+            })
+    else:
+        # Voluntary pass resets the streak
+        slot["consecutive_timeouts"] = 0
+
     s["miss_streak"] += 1
     s["turn_number"] += 1
     _resolve_win(s, win_phrases)
@@ -1825,7 +1862,9 @@ def _route_pass(serialise_fn, win_phrases):
     if not room_id: return jsonify({"error": "room_id required."}), 400
     s = get_room(room_id)
     if s is None: return jsonify({"error": "No active game for this room."}), 400
-    return _do_pass(s, serialise_fn, win_phrases)
+    data = request.json or {}
+    is_timeout = bool(data.get("is_timeout", False))
+    return _do_pass(s, serialise_fn, win_phrases, is_timeout=is_timeout)
 
 def _route_forfeit(serialise_fn, win_phrases):
     room_id = _get_room_id_from_request()
@@ -2228,6 +2267,217 @@ def handle_leave_room(data):
     username = data.get('username', 'Opponent')
     if room_id:
         emit('opponent_left', {'username': username}, room=room_id, include_self=False)
+
+# ═════════════════════════════════════════════════════════════════════════
+# MATCHMAKING SYSTEM
+# ═════════════════════════════════════════════════════════════════════════
+import threading
+
+# Per-sport queues. Each entry: {sid, user_id, username, joined_at, sports_set, prompted_at, paired}
+MATCHMAKING_QUEUES = {"nfl": [], "mlb": [], "nba": [], "nhl": []}
+QUEUE_LOCK = threading.Lock()  # serializes pairing to prevent double-matching
+SWEEP_INTERVAL = 30  # seconds — lower this once player count grows
+BOT_PROMPT_AFTER = 60  # seconds in queue before first bot offer
+BOT_REPROMPT_INTERVAL = 60  # if "no" clicked, wait this long for next prompt
+AFK_KICK_AFTER = 60  # if neither prompt response arrives in this window, kick
+
+def _queue_entry_for(sid):
+    """Return (sport, entry) for a sid in any queue, or None."""
+    for sport, q in MATCHMAKING_QUEUES.items():
+        for entry in q:
+            if entry["sid"] == sid:
+                return sport, entry
+    return None
+
+def _all_entries_for(sid):
+    """Return list of (sport, entry) — all queues a given sid is in."""
+    out = []
+    for sport, q in MATCHMAKING_QUEUES.items():
+        for entry in q:
+            if entry["sid"] == sid:
+                out.append((sport, entry))
+    return out
+
+def _remove_from_all_queues(sid):
+    """Pull a player out of every sport queue (used on pairing or disconnect)."""
+    for sport in MATCHMAKING_QUEUES:
+        MATCHMAKING_QUEUES[sport] = [e for e in MATCHMAKING_QUEUES[sport] if e["sid"] != sid]
+
+def _create_paired_room(sport, user_a, user_b):
+    """Build a fresh game room for two users matched from the queue."""
+    new_state_fn = {"nfl": empty_state, "mlb": mlb_empty_state, "nba": nba_empty_state, "nhl": nhl_empty_state}.get(sport, empty_state)
+    serialise_fn = {"nfl": serialise_state, "mlb": mlb_serialise_state, "nba": nba_serialise_state, "nhl": nhl_serialise_state}.get(sport, serialise_state)
+    cleanup_stale_rooms()
+    room_id = _generate_room_id()
+    s = new_state_fn(user_a, user_b)
+    s["room_id"] = room_id
+    s["sport"] = sport
+    save_room(room_id, s)
+    serialised = serialise_fn(s)
+    serialised["room_id"] = room_id
+    return room_id, serialised
+
+def _try_pair(entry):
+    """Attempt to pair a single queued entry against any other waiting player.
+    Returns True if paired. Caller must hold QUEUE_LOCK.
+
+    If the entry is queued for multiple sports, prefer the queue containing the
+    longest-waiting opponent (gives priority to people who've waited the most).
+    """
+    if entry.get("paired"): return False
+    candidates = []  # list of (other_entry, sport, opponent_wait)
+    now = time.time()
+    for sport, q in MATCHMAKING_QUEUES.items():
+        # Only consider sports this entry is queued for
+        if sport not in entry["sports_set"]: continue
+        for other in q:
+            if other["sid"] == entry["sid"]: continue
+            if other.get("paired"): continue
+            if str(other["user_id"]) == str(entry["user_id"]): continue
+            opp_wait = now - other["joined_at"]
+            candidates.append((other, sport, opp_wait))
+    if not candidates: return False
+    # Prefer the opponent who has waited the longest
+    candidates.sort(key=lambda x: -x[2])
+    other, sport, _ = candidates[0]
+    # Mark both paired BEFORE creating room to prevent double-pairing
+    entry["paired"] = True
+    other["paired"] = True
+    # Pull both out of every queue they're in
+    _remove_from_all_queues(entry["sid"])
+    _remove_from_all_queues(other["sid"])
+    # Build fresh user dicts from cached entry data
+    user_a = _resolve_user({"id": entry["user_id"], "username": entry["username"]})
+    user_b = _resolve_user({"id": other["user_id"], "username": other["username"]})
+    if not user_a or not user_b:
+        return False
+    room_id, serialised = _create_paired_room(sport, user_a, user_b)
+    # Notify both clients to join the new socket room
+    socketio.emit("matchmaking_paired", {"room_id": room_id, "sport": sport, "state": serialised}, to=entry["sid"])
+    socketio.emit("matchmaking_paired", {"room_id": room_id, "sport": sport, "state": serialised}, to=other["sid"])
+    return True
+
+def _matchmaking_sweep():
+    """Background loop: every SWEEP_INTERVAL seconds, try to pair queued players
+    and check whether anyone has been waiting long enough for a bot prompt."""
+    while True:
+        try:
+            socketio.sleep(SWEEP_INTERVAL)
+            with QUEUE_LOCK:
+                now = time.time()
+                # Pair whoever's been waiting longest first across all queues
+                all_entries = []
+                seen_sids = set()
+                for sport, q in MATCHMAKING_QUEUES.items():
+                    for e in q:
+                        if e["sid"] not in seen_sids:
+                            seen_sids.add(e["sid"])
+                            all_entries.append(e)
+                all_entries.sort(key=lambda e: e["joined_at"])
+                for entry in all_entries:
+                    if not entry.get("paired"):
+                        _try_pair(entry)
+                # Check bot prompts and AFK kicks
+                for sport, q in list(MATCHMAKING_QUEUES.items()):
+                    for entry in list(q):
+                        if entry.get("paired"): continue
+                        elapsed = now - entry["joined_at"]
+                        last_prompt = entry.get("prompted_at", 0)
+                        time_since_prompt = now - last_prompt if last_prompt else None
+                        # First prompt: wait BOT_PROMPT_AFTER
+                        if last_prompt == 0 and elapsed >= BOT_PROMPT_AFTER:
+                            entry["prompted_at"] = now
+                            socketio.emit("matchmaking_bot_offer", {
+                                "wait_seconds": int(elapsed)
+                            }, to=entry["sid"])
+                        # Re-prompt: BOT_REPROMPT_INTERVAL after last prompt with no response
+                        # AFK kick: if AFK_KICK_AFTER passes since last prompt with no answer
+                        elif last_prompt and time_since_prompt >= AFK_KICK_AFTER:
+                            # No response to last prompt — kick from queue
+                            socketio.emit("matchmaking_afk_kicked", {}, to=entry["sid"])
+                            _remove_from_all_queues(entry["sid"])
+        except Exception as e:
+            print(f"[matchmaking sweep error] {e}")
+
+def _start_matchmaking_thread():
+    """Idempotently start the background sweep using SocketIO's start_background_task."""
+    if not getattr(_start_matchmaking_thread, "_started", False):
+        socketio.start_background_task(_matchmaking_sweep)
+        _start_matchmaking_thread._started = True
+
+@socketio.on('matchmaking_join')
+def handle_matchmaking_join(data):
+    """Player joins one or more sport queues. Tries instant pair on join.
+    Expects: {sports: ['nfl', 'nba'], player: {id, username}}"""
+    if not isinstance(data, dict):
+        emit("error", {"message": "Invalid matchmaking request."}); return
+    sports = data.get("sports") or []
+    if isinstance(sports, str): sports = [sports]
+    sports = [s.lower() for s in sports if s and s.lower() in MATCHMAKING_QUEUES]
+    if not sports:
+        emit("error", {"message": "Pick at least one sport."}); return
+    player = data.get("player")
+    if not player:
+        emit("error", {"message": "Sign in before searching for a match."}); return
+    user = _resolve_user(player)
+    if not user:
+        emit("error", {"message": "Account not found."}); return
+    sid = request.sid
+    _start_matchmaking_thread()
+    with QUEUE_LOCK:
+        # Remove any prior queue entries for this user (rejoining cleans state)
+        _remove_from_all_queues(sid)
+        # Make a single shared entry referenced from all queues this user joined
+        entry = {
+            "sid": sid,
+            "user_id": str(user["id"]),
+            "username": user["username"],
+            "joined_at": time.time(),
+            "sports_set": set(sports),
+            "prompted_at": 0,
+            "paired": False,
+        }
+        for sport in sports:
+            MATCHMAKING_QUEUES[sport].append(entry)
+        emit("matchmaking_queued", {"sports": sports})
+        # Try instant pair on join
+        _try_pair(entry)
+
+@socketio.on('matchmaking_cancel')
+def handle_matchmaking_cancel():
+    """User cancels their search."""
+    sid = request.sid
+    with QUEUE_LOCK:
+        _remove_from_all_queues(sid)
+    emit("matchmaking_cancelled", {})
+
+@socketio.on('matchmaking_bot_response')
+def handle_matchmaking_bot_response(data):
+    """Player responds to bot prompt: {accept: true/false}"""
+    if not isinstance(data, dict): return
+    sid = request.sid
+    accept = bool(data.get("accept"))
+    with QUEUE_LOCK:
+        result = _queue_entry_for(sid)
+        if not result:
+            emit("error", {"message": "You are no longer in queue."}); return
+        sport, entry = result
+        if accept:
+            # Pull from queue, start a bot game in their first queued sport
+            target_sport = next(iter(entry["sports_set"]), sport)
+            _remove_from_all_queues(sid)
+            emit("matchmaking_bot_accepted", {"sport": target_sport})
+        else:
+            # Reset prompt timer — they get another offer in BOT_REPROMPT_INTERVAL
+            entry["prompted_at"] = time.time()
+            emit("matchmaking_bot_declined", {})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Browser closed / network drop — remove from all queues."""
+    sid = request.sid
+    with QUEUE_LOCK:
+        _remove_from_all_queues(sid)
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
