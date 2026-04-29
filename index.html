@@ -862,9 +862,42 @@ input::placeholder { color: var(--text-dim); }
    RESPONSIVE
    ═══════════════════════════════════════════════════════ */
 @media (max-width: 600px) {
-  header { padding: 0 12px; height: 56px; }
-  .logo { font-size: 1.5rem; }
-  .sub-brand { font-size: 0.55rem; letter-spacing: 0.2em; }
+  header { padding: 0 10px; height: 52px; gap: 6px; }
+  .logo { font-size: 1.2rem; }
+  .sub-brand { font-size: 0.45rem; letter-spacing: 0.18em; }
+  .header-left { gap: 8px; }
+  .btn-rules {
+    padding: 4px 8px;
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  #header-auth {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 1;
+    min-width: 0;
+  }
+  #header-user-info {
+    padding: 4px 8px !important;
+    font-size: 0.7rem !important;
+    letter-spacing: 0.04em !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 110px;
+  }
+  #btn-logout {
+    margin-left: 0 !important;
+    padding: 5px 9px !important;
+    font-size: 0.65rem !important;
+    white-space: nowrap;
+  }
+  #btn-login-hdr {
+    padding: 5px 10px !important;
+    font-size: 0.7rem !important;
+  }
   .card { padding: 28px 20px; }
   .scoreboard { padding: 12px 14px; flex-wrap: wrap; gap: 8px; }
   .player-panel { width: 40%; }
