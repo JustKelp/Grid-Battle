@@ -894,6 +894,12 @@ input::placeholder { color: var(--text-dim); }
     font-size: 0.65rem !important;
     white-space: nowrap;
   }
+  #btn-admin {
+    margin-left: 0 !important;
+    padding: 5px 9px !important;
+    font-size: 0.65rem !important;
+    white-space: nowrap;
+  }
   #btn-login-hdr {
     padding: 5px 10px !important;
     font-size: 0.7rem !important;
@@ -1049,6 +1055,7 @@ input::placeholder { color: var(--text-dim); }
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
     <div id="header-user-info" onclick="showProfile()" title="Click to view your profile and change favorite teams" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em; cursor:pointer; padding:6px 12px; border:1px solid rgba(207,196,147,0.3); border-radius:var(--radius); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary-gold)'; this.style.background='rgba(207,196,147,0.08)';" onmouseout="this.style.borderColor='rgba(207,196,147,0.3)'; this.style.background='transparent';"></div>
+    <button class="btn btn-small btn-outline" id="btn-admin" onclick="showAdminStats()" style="display:none; margin-left:10px; border-color:var(--accent-cyan); color:var(--accent-cyan);">Stats</button>
     <button class="btn btn-small btn-outline btn-danger" id="btn-logout" onclick="handleLogout()" style="display:none; margin-left:18px;">Logout</button>
   </div>
 </header>
@@ -1435,6 +1442,34 @@ input::placeholder { color: var(--text-dim); }
   </div>
 </div>
 
+<!-- ═══════════════════════════ HEADER RULES POPUP ══════════════ -->
+<div class="modal-overlay" id="header-rules-modal" onclick="if(event.target===this) hideHeaderRules()">
+  <div class="rules-content" style="max-width:480px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 id="header-rules-title" style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.08em; font-size:1.2rem;">Header</h3>
+      <button class="modal-close" onclick="hideHeaderRules()">✕</button>
+    </div>
+    <p id="header-rules-body" style="font-size:0.9rem; line-height:1.6; color:var(--text-primary);"></p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════ ADMIN STATS MODAL ═══════════════ -->
+<div class="modal-overlay" id="admin-modal" onclick="if(event.target===this) hideAdminStats()">
+  <div class="rules-content" style="max-width:560px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+      <h3 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:1.4rem;">Site Stats</h3>
+      <div>
+        <button class="btn btn-small btn-outline" onclick="loadAdminStats()" style="margin-right:8px; padding:4px 10px; font-size:0.7rem;">Refresh</button>
+        <button class="modal-close" onclick="hideAdminStats()">✕</button>
+      </div>
+    </div>
+    <div id="admin-body">
+      <p style="color:var(--text-muted); text-align:center; padding:20px;">Loading...</p>
+    </div>
+    <p style="color:var(--text-muted); font-size:0.7rem; text-align:center; margin-top:12px;">Auto-refreshes every 15 seconds while open</p>
+  </div>
+</div>
+
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
 
@@ -1592,18 +1627,22 @@ function escapeHtml(text) {
   return d.innerHTML;
 }
 
+let authToken = null;
+
 async function apiCall(endpoint, method = 'GET', body = null, silent = false) {
   const options = {
     method,
     headers: { 'Content-Type': 'application/json' }
   };
+  if (authToken) {
+    options.headers['Authorization'] = `Bearer ${authToken}`;
+  }
   if (body) {
     if (method === 'POST' && currentRoomId && !body.room_id) {
       body.room_id = currentRoomId;
     }
     options.body = JSON.stringify(body);
   }
-  // For GET with room_id
   if (method === 'GET' && currentRoomId) {
     const sep = endpoint.includes('?') ? '&' : '?';
     endpoint += `${sep}room_id=${encodeURIComponent(currentRoomId)}`;
@@ -1611,7 +1650,16 @@ async function apiCall(endpoint, method = 'GET', body = null, silent = false) {
   try {
     const res = await fetch(endpoint, options);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || data.message || 'API Error');
+    if (!res.ok) {
+      if (res.status === 401 && authToken) {
+        authToken = null;
+        currentUser = null;
+        try { localStorage.removeItem('statcheck_user'); localStorage.removeItem('statcheck_token'); } catch(e) {}
+        if (!silent) showToast('Session expired — please sign in again', 'error');
+        showScreen('screen-login');
+      }
+      throw new Error(data.error || data.message || 'API Error');
+    }
     return data;
   } catch (err) {
     if (!silent) showToast(err.message, 'error');
@@ -1647,41 +1695,174 @@ function showToast(msg, type = 'default') {
   setTimeout(() => toast.remove(), 3500);
 }
 
+// Admin usernames that get the "Stats" button
+const ADMIN_USERNAMES = ["Kelp"];
+
+function isAdminUser() {
+  if (!currentUser || currentUser.is_guest) return false;
+  return ADMIN_USERNAMES.some(u => u.toLowerCase() === currentUser.username.toLowerCase());
+}
+
 function updateHeaderUser() {
   const btn = document.getElementById('btn-login-hdr');
   const info = document.getElementById('header-user-info');
   const logoutBtn = document.getElementById('btn-logout');
+  const adminBtn = document.getElementById('btn-admin');
   if (currentUser && !currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
-    info.innerHTML = `OP: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
+    info.innerHTML = `OP: ${escapeHtml(currentUser.username.toUpperCase())} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
+    if (adminBtn) adminBtn.style.display = isAdminUser() ? 'inline-block' : 'none';
   } else if (currentUser && currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
-    info.innerHTML = `GUEST: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
+    info.innerHTML = `GUEST: ${escapeHtml(currentUser.username.toUpperCase())} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
+    if (adminBtn) adminBtn.style.display = 'none';
   } else {
     btn.style.display = 'block';
     info.style.display = 'none';
     logoutBtn.style.display = 'none';
+    if (adminBtn) adminBtn.style.display = 'none';
   }
+}
+
+// ── HEADER RULES POPUP ────────────────────────────────────────
+function showHeaderRules(rawValue, displayName) {
+  let title, body;
+  if (rawValue && rawValue.startsWith('STAT:')) {
+    title = displayName;
+    body = `For cells along this <strong>${escapeHtml(displayName)}</strong> axis, your player must have hit this milestone <strong>in a single season</strong> while playing for the team on the other axis. If both axes are stats, the player needs to have achieved each one at any point in their career.`;
+  } else {
+    title = displayName;
+    body = `For cells along this row/column, your player must have <strong>played a snap (or appeared on the active roster) for ${escapeHtml(displayName)}</strong>. If the other axis is a stat category, they also need to have hit that stat in a single season while playing for ${escapeHtml(displayName)}.`;
+  }
+  document.getElementById('header-rules-title').textContent = title;
+  document.getElementById('header-rules-body').innerHTML = body;
+  document.getElementById('header-rules-modal').classList.add('active');
+}
+function hideHeaderRules() {
+  document.getElementById('header-rules-modal').classList.remove('active');
+}
+
+// ── ADMIN STATS ────────────────────────────────────────────────
+let adminAutoRefreshTimer = null;
+
+function showAdminStats() {
+  if (!isAdminUser()) {
+    showToast('Admin access required', 'error');
+    return;
+  }
+  document.getElementById('admin-modal').classList.add('active');
+  loadAdminStats();
+  if (adminAutoRefreshTimer) clearInterval(adminAutoRefreshTimer);
+  adminAutoRefreshTimer = setInterval(loadAdminStats, 15000);
+}
+
+function hideAdminStats() {
+  document.getElementById('admin-modal').classList.remove('active');
+  if (adminAutoRefreshTimer) {
+    clearInterval(adminAutoRefreshTimer);
+    adminAutoRefreshTimer = null;
+  }
+}
+
+async function loadAdminStats() {
+  if (!currentUser) return;
+  const body = document.getElementById('admin-body');
+  try {
+    const url = `/api/admin/stats?username=${encodeURIComponent(currentUser.username)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      body.innerHTML = `<p style="color:var(--accent-red); text-align:center; padding:20px;">Access denied (HTTP ${res.status})</p>`;
+      return;
+    }
+    const data = await res.json();
+    renderAdminStats(data);
+  } catch(e) {
+    body.innerHTML = `<p style="color:var(--accent-red); text-align:center; padding:20px;">Failed to load: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function renderAdminStats(data) {
+  const body = document.getElementById('admin-body');
+  if (!data || !data.live || !data.all_time) {
+    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No data</p>';
+    return;
+  }
+  const live = data.live;
+  const all = data.all_time;
+  const now = new Date().toLocaleTimeString();
+
+  let html = `
+    <h4 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:0.85rem; margin:0 0 10px;">Live Now <span style="color:var(--text-muted); font-weight:normal; font-size:0.7rem;">(updated ${now})</span></h4>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px;">
+      ${statCard('Active Players', live.live_players, 'var(--primary-gold)')}
+      ${statCard('Games In Progress', live.in_progress_games, 'var(--accent-cyan)')}
+      ${statCard('In Queue', live.matchmaking_queue_total, 'var(--text-primary)')}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:18px;">
+      ${miniCard('NFL', live.active_games_by_sport.nfl, live.matchmaking_queue_sizes.nfl)}
+      ${miniCard('MLB', live.active_games_by_sport.mlb, live.matchmaking_queue_sizes.mlb)}
+      ${miniCard('NBA', live.active_games_by_sport.nba, live.matchmaking_queue_sizes.nba)}
+      ${miniCard('NHL', live.active_games_by_sport.nhl, live.matchmaking_queue_sizes.nhl)}
+    </div>
+    <h4 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:0.85rem; margin:0 0 10px;">All Time</h4>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+      ${statCard('Total Users', all.total_registered_users, 'var(--primary-gold)')}
+      ${statCard('Players Who Played', all.users_who_played, 'var(--primary-gold)')}
+      ${statCard('Total Games', all.total_games_played, 'var(--primary-gold)')}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+      ${statCard('Total Wins', all.total_wins, 'var(--text-primary)')}
+      ${statCard('Total Losses', all.total_losses, 'var(--text-primary)')}
+      ${statCard('Total Draws', all.total_draws, 'var(--text-primary)')}
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      ${statCard('New Signups (7d)', all.recent_signups_7d, 'var(--accent-cyan)')}
+      ${statCard('Unique Guess Combos', all.guess_log_unique_combos, 'var(--accent-cyan)')}
+    </div>
+  `;
+  if (all.top_guess) {
+    html += `<p style="color:var(--text-muted); font-size:0.8rem; margin-top:14px; text-align:center;">Most-guessed player: <span style="color:var(--primary-gold); font-weight:600;">${escapeHtml(all.top_guess.player)}</span> (${all.top_guess.count} times)</p>`;
+  }
+  body.innerHTML = html;
+}
+
+function statCard(label, value, color) {
+  return `<div style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.12); border-radius:var(--radius); padding:10px 8px; text-align:center;">
+    <div style="color:var(--text-muted); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${label}</div>
+    <div style="color:${color}; font-family:'Oswald',sans-serif; font-size:1.5rem; font-weight:700;">${value}</div>
+  </div>`;
+}
+
+function miniCard(sport, games, queue) {
+  return `<div style="background:rgba(0,0,0,0.2); border:1px solid rgba(207,196,147,0.08); border-radius:var(--radius); padding:6px 4px; text-align:center;">
+    <div style="color:var(--text-muted); font-size:0.6rem; letter-spacing:0.05em; margin-bottom:2px;">${sport}</div>
+    <div style="color:var(--text-primary); font-size:0.75rem;"><span style="color:var(--accent-cyan); font-weight:700;">${games}</span> games · ${queue} queued</div>
+  </div>`;
 }
 
 // ── SESSION PERSISTENCE ────────────────────────────────────────
 function saveSession() {
   if (currentUser && !currentUser.is_guest) {
-    try { localStorage.setItem('statcheck_user', JSON.stringify(currentUser)); } catch(e) {}
+    try {
+      localStorage.setItem('statcheck_user', JSON.stringify(currentUser));
+      if (authToken) localStorage.setItem('statcheck_token', authToken);
+    } catch(e) {}
   }
 }
 
 function loadSession() {
   try {
     const saved = localStorage.getItem('statcheck_user');
-    if (saved) {
+    const savedToken = localStorage.getItem('statcheck_token');
+    if (saved && savedToken) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.username && !parsed.is_guest) {
         currentUser = parsed;
+        authToken = savedToken;
         updateHeaderUser();
         showScreen('screen-lobby');
         return true;
@@ -1692,12 +1873,16 @@ function loadSession() {
 }
 
 function handleLogout() {
-  try { localStorage.removeItem('statcheck_user'); } catch(e) {}
+  try {
+    localStorage.removeItem('statcheck_user');
+    localStorage.removeItem('statcheck_token');
+  } catch(e) {}
   if (socket) {
     try { socket.disconnect(); } catch(e) {}
     socket = null;
   }
   currentUser = null;
+  authToken = null;
   currentOpponent = null;
   currentRoomId = null;
   isOnlineGame = false;
@@ -1825,6 +2010,7 @@ async function handleLogin() {
   try {
     const data = await apiCall('/api/auth/login', 'POST', {username: u, password: p});
     currentUser = data.user;
+    authToken = data.auth_token;
     saveSession();
     updateHeaderUser();
     initSocket();
@@ -1836,10 +2022,12 @@ async function handleRegister() {
   const u = document.getElementById('reg-user').value.trim();
   const p = document.getElementById('reg-pass').value;
   if (!u || !p) return showToast('Username and password required', 'error');
-  if (p.length < 4) return showToast('Password must be at least 4 characters', 'error');
+  if (p.length < 8) return showToast('Password must be at least 8 characters', 'error');
+  if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) return showToast('Password must include both a letter and a number', 'error');
   try {
     const data = await apiCall('/api/auth/register', 'POST', {username: u, password: p});
     currentUser = data.user;
+    authToken = data.auth_token;
     saveSession();
     updateHeaderUser();
     initSocket();
@@ -1851,6 +2039,7 @@ async function handleGuestLogin() {
   try {
     const data = await apiCall('/api/auth/guest', 'POST');
     currentUser = data.user;
+    authToken = data.auth_token;
     updateHeaderUser();
     initSocket();
     showScreen('screen-lobby');
@@ -2213,6 +2402,10 @@ function renderBoard(oldBoard) {
     const hdr = createEl('div', 'grid-header');
     const name = gameState.col_names[c];
     const logo = gameState.col_logos[c];
+    const raw = gameState.cols[c];
+    hdr.style.cursor = 'pointer';
+    hdr.title = 'Tap for rules';
+    hdr.onclick = () => showHeaderRules(raw, name);
     if (logo) {
       const img = document.createElement('img');
       img.src = logo;
@@ -2243,7 +2436,11 @@ function renderBoard(oldBoard) {
   for (let r = 0; r < 3; r++) {
     const rowName = gameState.row_names[r];
     const rowLogo = gameState.row_logos[r];
+    const rowRaw = gameState.rows[r];
     const rowHdr = createEl('div', 'grid-header');
+    rowHdr.style.cursor = 'pointer';
+    rowHdr.title = 'Tap for rules';
+    rowHdr.onclick = () => showHeaderRules(rowRaw, rowName);
     if (rowLogo) {
       const img = document.createElement('img');
       img.src = rowLogo;
@@ -2276,7 +2473,7 @@ function renderBoard(oldBoard) {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = (cellData.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2369,7 +2566,7 @@ function startTurnTimer() {
       // Only the active player's screen should auto-pass
       if (isMyTurn()) {
         showToast('Time expired — turn passed', 'error');
-        passTurn();
+        passTurn(true);
       }
     }
   }, 1000);
@@ -2420,12 +2617,12 @@ async function doBotTurn() {
   } catch(e) { botPending = false; /* silently ignore "not bot's turn" errors */ }
 }
 
-async function passTurn() {
+async function passTurn(isTimeout = false) {
   if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
   const base = getApiBase();
   try {
-    const res = await apiCall(`${base}/pass`, 'POST', {});
-    showToast(res.message);
+    const res = await apiCall(`${base}/pass`, 'POST', {is_timeout: isTimeout});
+    showToast(res.message, res.result === 'afk_kicked' ? 'error' : 'default');
     disableCellsBriefly();
     updateGameState(res.state);
   } catch(e) {}
@@ -2581,10 +2778,10 @@ function openSearch(idx) {
     const currentTurn = gameState.turn;
     if (cellData.owner_turn === currentTurn) {
       titleEl.textContent = 'Upgrade Cell';
-      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)}) \u2014 Beat this rarity`;
+      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${(cellData.rarity * 100).toFixed(1)}) \u2014 Beat this rarity`;
     } else {
       titleEl.textContent = 'Steal Attempt';
-      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)})`;
+      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${(cellData.rarity * 100).toFixed(1)})`;
     }
   } else {
     titleEl.textContent = 'Select Player';
@@ -2777,7 +2974,7 @@ function buildEndBoard() {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = (cellData.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2846,7 +3043,7 @@ function buildRevealBoard() {
         nameDiv.textContent = answer.name;
         nameDiv.style.color = 'var(--accent-cyan)';
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(answer.rarity * 100);
+        rarityDiv.textContent = (answer.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2876,6 +3073,8 @@ document.addEventListener('keydown', (e) => {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
     if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
+    if (document.getElementById('header-rules-modal') && document.getElementById('header-rules-modal').classList.contains('active')) hideHeaderRules();
+    if (document.getElementById('admin-modal') && document.getElementById('admin-modal').classList.contains('active')) hideAdminStats();
   }
 });
 
@@ -2909,7 +3108,7 @@ async function loadLeaderboard() {
       const rankClass = i < 3 ? 'lb-rank top-3' : 'lb-rank';
       row.innerHTML = `
         <div class="${rankClass}">${i + 1}</div>
-        <div class="lb-name">${p.username}</div>
+        <div class="lb-name">${escapeHtml(p.username)}</div>
         <div class="lb-wins">${p.wins}</div>
         <div class="lb-stat">${p.losses}</div>
         <div class="lb-stat">${p.win_pct}%</div>
