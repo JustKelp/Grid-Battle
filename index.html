@@ -753,6 +753,45 @@ input::placeholder { color: var(--text-dim); }
   z-index: 2000;
   pointer-events: none;
 }
+
+/* ── Report Bug Button (always visible bottom-left) ─────── */
+#report-bug-btn {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 1500;
+  background: linear-gradient(135deg, rgba(0,40,28,0.95) 0%, rgba(2,26,16,0.97) 100%);
+  border: 1px solid var(--border-gold);
+  color: var(--text-muted);
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: 'Oswald', sans-serif;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#report-bug-btn:hover {
+  border-color: var(--primary-gold);
+  color: var(--primary-gold);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+}
+@media (max-width: 600px) {
+  #report-bug-btn {
+    bottom: 10px;
+    left: 10px;
+    padding: 6px 10px;
+    font-size: 0.65rem;
+  }
+}
 .toast {
   background: linear-gradient(135deg, rgba(0,40,28,0.95) 0%, rgba(2,26,16,0.97) 100%);
   border: 1px solid var(--border-gold-bright);
@@ -1464,6 +1503,45 @@ input::placeholder { color: var(--text-dim); }
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
 
+<!-- ═══════════════════════════ REPORT BUG BUTTON ═══════════════ -->
+<button id="report-bug-btn" onclick="showBugReport()" title="Report a bug">
+  🐛 Report Bug
+</button>
+
+<!-- ═══════════════════════════ REPORT BUG MODAL ════════════════ -->
+<div class="modal-overlay" id="bug-modal" onclick="if(event.target===this) hideBugReport()">
+  <div class="rules-content" style="max-width:480px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.08em; font-size:1.2rem; margin:0;">Report a Bug</h3>
+      <button class="modal-close" onclick="hideBugReport()">✕</button>
+    </div>
+    <p style="color:var(--text-muted); font-size:0.85rem; line-height:1.5; margin-bottom:14px; text-align:center;">
+      Tell me what went wrong and I'll fix it. The more detail the better — what you were doing, what happened vs what you expected, and which sport/screen you were on all helps a ton.
+    </p>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px; letter-spacing:0.05em; text-transform:uppercase;">Bug type</label>
+      <select id="bug-type" style="width:100%; padding:8px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--border-gold); color:var(--text-primary); border-radius:var(--radius); font-family:inherit;">
+        <option value="gameplay">Gameplay issue</option>
+        <option value="player_data">Player data wrong</option>
+        <option value="ui">UI / display problem</option>
+        <option value="auth">Login / account issue</option>
+        <option value="connection">Connection / matchmaking</option>
+        <option value="other">Something else</option>
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom:12px;">
+      <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px; letter-spacing:0.05em; text-transform:uppercase;">What happened?</label>
+      <textarea id="bug-description" rows="5" placeholder="e.g. Tried to claim Travis Kelce on the Chiefs/Eagles cell and it said he wasn't valid even though he played for both" style="width:100%; padding:10px; background:rgba(0,0,0,0.3); border:1px solid var(--border-gold); color:var(--text-primary); border-radius:var(--radius); font-family:inherit; resize:vertical;"></textarea>
+    </div>
+    <div class="form-group" style="margin-bottom:14px;">
+      <label style="display:block; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px; letter-spacing:0.05em; text-transform:uppercase;">Contact (optional)</label>
+      <input type="text" id="bug-contact" placeholder="email or username so I can follow up" style="width:100%; padding:8px 10px; background:rgba(0,0,0,0.3); border:1px solid var(--border-gold); color:var(--text-primary); border-radius:var(--radius); font-family:inherit;">
+    </div>
+    <button class="btn" style="width:100%;" onclick="submitBugReport()">Send Report</button>
+    <p style="color:var(--text-dim); font-size:0.7rem; text-align:center; margin-top:10px;">Reports are sent directly to the developer. Thanks for helping make StatCheck better.</p>
+  </div>
+</div>
+
 <!-- ═══════════════════════════ JAVASCRIPT ══════════════════════ -->
 <script>
 // ── STATE & CONSTANTS ──────────────────────────────────────────
@@ -1740,6 +1818,61 @@ function showRules() {
 }
 function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
+}
+
+// ── BUG REPORT ─────────────────────────────────────────────────
+function showBugReport() {
+  document.getElementById('bug-modal').classList.add('active');
+  // Pre-fill contact if user is logged in
+  const contact = document.getElementById('bug-contact');
+  if (contact && currentUser && !currentUser.is_guest && !contact.value) {
+    contact.value = currentUser.username;
+  }
+}
+function hideBugReport() {
+  document.getElementById('bug-modal').classList.remove('active');
+}
+
+async function submitBugReport() {
+  const type = document.getElementById('bug-type').value;
+  const desc = document.getElementById('bug-description').value.trim();
+  const contact = document.getElementById('bug-contact').value.trim();
+  if (!desc) {
+    showToast('Please describe the bug', 'error');
+    return;
+  }
+  if (desc.length < 10) {
+    showToast('Tell me a little more — at least 10 characters', 'error');
+    return;
+  }
+  // Gather context to include with report
+  const context = {
+    type: type,
+    description: desc,
+    contact: contact,
+    user: currentUser ? currentUser.username : 'anonymous',
+    sport: typeof currentSport !== 'undefined' ? currentSport : null,
+    screen: document.querySelector('.screen.active') ? document.querySelector('.screen.active').id : null,
+    user_agent: navigator.userAgent,
+    url: window.location.href,
+    timestamp: new Date().toISOString(),
+  };
+  try {
+    const res = await fetch('/api/bug_report', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(context)
+    });
+    if (res.ok) {
+      showToast('Bug report sent — thanks!', 'success');
+      document.getElementById('bug-description').value = '';
+      hideBugReport();
+    } else {
+      showToast('Could not send report. Try again or email me directly.', 'error');
+    }
+  } catch(e) {
+    showToast('Network error. Please try again.', 'error');
+  }
 }
 
 // ── PROFILE MODAL ──────────────────────────────────────────────
@@ -2902,6 +3035,7 @@ document.addEventListener('keydown', (e) => {
     if (document.getElementById('search-modal').classList.contains('active')) hideSearch();
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
     if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
+    if (document.getElementById('bug-modal') && document.getElementById('bug-modal').classList.contains('active')) hideBugReport();
   }
 });
 
