@@ -1847,13 +1847,16 @@ async function loadAdminStats() {
   }
 }
 
+let bugReportsShowResolved = false;
+
 async function loadBugReports() {
   if (!currentUser) return;
   adminCurrentView = 'bugs';
   const body = document.getElementById('admin-body');
   body.innerHTML = `<p style="color:var(--text-muted); text-align:center; padding:20px;">Loading bug reports...</p>`;
   try {
-    const url = `/api/admin/bug_reports?username=${encodeURIComponent(currentUser.username)}`;
+    const includeResolved = bugReportsShowResolved ? '&include_resolved=1' : '';
+    const url = `/api/admin/bug_reports?username=${encodeURIComponent(currentUser.username)}${includeResolved}`;
     const res = await fetch(url);
     if (!res.ok) {
       body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Access denied (HTTP ${res.status})</p>`;
@@ -1864,6 +1867,119 @@ async function loadBugReports() {
   } catch(e) {
     body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Failed to load: ${e.message}</p>`;
   }
+}
+
+async function resolveBugReport(bugId) {
+  if (!currentUser) return;
+  if (!confirm('Mark this bug report as resolved?')) return;
+  try {
+    const res = await fetch(`/api/admin/bug_reports/resolve?username=${encodeURIComponent(currentUser.username)}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: bugId, username: currentUser.username})
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Marked as resolved', 'success');
+      loadBugReports();
+    } else {
+      showToast(data.error || 'Failed to resolve', 'error');
+    }
+  } catch(e) {
+    showToast('Network error', 'error');
+  }
+}
+
+async function reopenBugReport(bugId) {
+  if (!currentUser) return;
+  try {
+    const res = await fetch(`/api/admin/bug_reports/reopen?username=${encodeURIComponent(currentUser.username)}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: bugId, username: currentUser.username})
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast('Reopened', 'success');
+      loadBugReports();
+    } else {
+      showToast(data.error || 'Failed to reopen', 'error');
+    }
+  } catch(e) {
+    showToast('Network error', 'error');
+  }
+}
+
+function toggleBugReportsView() {
+  bugReportsShowResolved = !bugReportsShowResolved;
+  loadBugReports();
+}
+
+function renderBugReports(data) {
+  const body = document.getElementById('admin-body');
+  if (!data || !data.reports) {
+    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No bug reports</p>';
+    return;
+  }
+  const escapeHtml2 = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const activeCount = data.active_count || 0;
+  const resolvedCount = data.resolved_count || 0;
+  const filterLabel = bugReportsShowResolved ? 'Showing all' : 'Showing active only';
+  const toggleLabel = bugReportsShowResolved ? 'Hide resolved' : 'Show resolved';
+
+  let html = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; padding-bottom:10px; border-bottom:1px solid rgba(207,196,147,0.15);">
+      <div style="font-size:0.75rem; color:var(--text-muted);">
+        <span style="color:#e85a5a; font-weight:600;">${activeCount}</span> active
+        <span style="margin:0 8px; color:var(--text-dim);">·</span>
+        <span style="color:var(--text-muted); font-weight:600;">${resolvedCount}</span> resolved
+        <span style="margin:0 8px; color:var(--text-dim);">·</span>
+        <span style="color:var(--accent-cyan);">${filterLabel}</span>
+      </div>
+      <button class="btn btn-small btn-outline" onclick="toggleBugReportsView()" style="padding:4px 10px; font-size:0.7rem;">${toggleLabel}</button>
+    </div>
+  `;
+
+  if (data.count === 0) {
+    html += `<p style="color:var(--text-muted); text-align:center; padding:30px;">${bugReportsShowResolved ? 'No bug reports' : 'No active bug reports 🎉'}</p>`;
+    body.innerHTML = html;
+    return;
+  }
+
+  data.reports.forEach((r) => {
+    const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : 'Unknown time';
+    const isResolved = r.resolved === true;
+    const cardOpacity = isResolved ? '0.55' : '1';
+    const borderColor = isResolved ? 'rgba(207,196,147,0.08)' : 'rgba(207,196,147,0.15)';
+    let actionBtn;
+    if (isResolved) {
+      const resolvedTs = r.resolved_at ? new Date(r.resolved_at).toLocaleString() : 'Unknown';
+      actionBtn = `<button class="btn btn-small btn-outline" onclick="reopenBugReport('${escapeHtml2(r.id)}')" style="padding:4px 10px; font-size:0.7rem;">Reopen</button>`;
+      var resolvedNote = `<div style="color:var(--text-dim); font-size:0.7rem; margin-top:6px; font-style:italic;">✓ Resolved by ${escapeHtml2(r.resolved_by || 'admin')} on ${escapeHtml2(resolvedTs)}</div>`;
+    } else {
+      actionBtn = `<button class="btn btn-small btn-outline" onclick="resolveBugReport('${escapeHtml2(r.id)}')" style="padding:4px 10px; font-size:0.7rem; border-color:#9CCB3B; color:#9CCB3B;">Mark Resolved</button>`;
+      var resolvedNote = '';
+    }
+    html += `
+      <div style="background:rgba(0,0,0,0.3); border:1px solid ${borderColor}; border-radius:var(--radius); padding:12px 14px; margin-bottom:10px; opacity:${cardOpacity};">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; gap:10px;">
+          <div>
+            <span style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); font-size:0.75rem; letter-spacing:0.05em; text-transform:uppercase;">${escapeHtml2(r.type || 'other')}</span>
+            <span style="color:var(--text-dim); font-size:0.7rem; margin-left:10px;">${escapeHtml2(ts)}</span>
+          </div>
+          ${actionBtn}
+        </div>
+        <p style="color:var(--text-primary); font-size:0.85rem; line-height:1.5; margin:0 0 8px;">${escapeHtml2(r.description)}</p>
+        <div style="color:var(--text-muted); font-size:0.7rem;">
+          <strong>From:</strong> ${escapeHtml2(r.user || 'anonymous')}${r.contact ? ` (${escapeHtml2(r.contact)})` : ''}
+          ${r.sport ? ` · <strong>Sport:</strong> ${escapeHtml2(r.sport)}` : ''}
+          ${r.screen ? ` · <strong>Screen:</strong> ${escapeHtml2(r.screen)}` : ''}
+        </div>
+        ${resolvedNote}
+      </div>
+    `;
+  });
+  body.innerHTML = html;
 }
 
 function renderAdminStats(data) {
@@ -1909,38 +2025,6 @@ function renderAdminStats(data) {
   if (all.top_guess) {
     html += `<p style="color:var(--text-muted); font-size:0.8rem; margin-top:14px; text-align:center;">Most-guessed player: <span style="color:var(--primary-gold); font-weight:600;">${all.top_guess.player}</span> (${all.top_guess.count} times)</p>`;
   }
-  body.innerHTML = html;
-}
-
-function renderBugReports(data) {
-  const body = document.getElementById('admin-body');
-  if (!data || !data.reports) {
-    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No bug reports</p>';
-    return;
-  }
-  if (data.count === 0) {
-    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:30px;">No bug reports yet 🎉</p>';
-    return;
-  }
-  const escapeHtml2 = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let html = `<p style="color:var(--text-muted); font-size:0.75rem; text-align:center; margin-bottom:14px;">Showing ${data.count} report${data.count === 1 ? '' : 's'} — newest first</p>`;
-  data.reports.forEach((r, i) => {
-    const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : 'Unknown time';
-    html += `
-      <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.15); border-radius:var(--radius); padding:12px 14px; margin-bottom:10px;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); font-size:0.75rem; letter-spacing:0.05em; text-transform:uppercase;">${escapeHtml2(r.type || 'other')}</span>
-          <span style="color:var(--text-dim); font-size:0.7rem;">${escapeHtml2(ts)}</span>
-        </div>
-        <p style="color:var(--text-primary); font-size:0.85rem; line-height:1.5; margin:0 0 8px;">${escapeHtml2(r.description)}</p>
-        <div style="color:var(--text-muted); font-size:0.7rem;">
-          <strong>From:</strong> ${escapeHtml2(r.user || 'anonymous')}${r.contact ? ` (${escapeHtml2(r.contact)})` : ''}
-          ${r.sport ? ` &middot; <strong>Sport:</strong> ${escapeHtml2(r.sport)}` : ''}
-          ${r.screen ? ` &middot; <strong>Screen:</strong> ${escapeHtml2(r.screen)}` : ''}
-        </div>
-      </div>
-    `;
-  });
   body.innerHTML = html;
 }
 

@@ -2382,8 +2382,7 @@ def _check_bug_report_rate(ip):
 
 @app.route("/api/bug_report", methods=["POST"])
 def bug_report_route():
-    """Receive a bug report. Logs to a JSONL file and returns ok.
-    The file lives at the same dir as app.py and can be tailed for new reports."""
+    """Receive a bug report. Logs to a JSONL file and returns ok."""
     if _check_bug_report_rate(request.remote_addr):
         return jsonify({"error": "Too many reports. Please wait an hour."}), 429
     data = request.json or {}
@@ -2392,8 +2391,9 @@ def bug_report_route():
         return jsonify({"error": "Description too short."}), 400
     if len(description) > 5000:
         return jsonify({"error": "Description too long."}), 400
-    # Build sanitized record
+    # Build sanitized record with a stable ID for later resolution
     record = {
+        "id": f"bug_{int(time.time()*1000)}_{random.randint(1000,9999)}",
         "timestamp": data.get("timestamp") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "type": str(data.get("type", "other"))[:50],
         "description": description,
@@ -2404,6 +2404,9 @@ def bug_report_route():
         "url": str(data.get("url", ""))[:500],
         "user_agent": str(data.get("user_agent", ""))[:500],
         "ip": request.remote_addr or "unknown",
+        "resolved": False,
+        "resolved_at": None,
+        "resolved_by": None,
     }
     try:
         with open(BUG_REPORT_LOG, "a") as f:
@@ -2411,15 +2414,11 @@ def bug_report_route():
     except Exception as e:
         print(f"[bug_report write error] {e}")
         return jsonify({"error": "Could not save report."}), 500
-    print(f"[BUG REPORT] {record['type']} from {record['user']}: {description[:200]}")
+    print(f"[BUG REPORT {record['id']}] {record['type']} from {record['user']}: {description[:200]}")
     return jsonify({"ok": True, "message": "Thanks for the report."})
 
-@app.route("/api/admin/bug_reports", methods=["GET"])
-def list_bug_reports():
-    """Admin: read all bug reports. Pass ?username=Kelp."""
-    username = request.args.get("username", "")
-    if not _is_admin(username):
-        return jsonify({"error": "Unauthorized"}), 403
+def _read_all_bug_reports():
+    """Read every bug report from the log. Returns a list of dicts with id field guaranteed."""
     reports = []
     try:
         with open(BUG_REPORT_LOG) as f:
@@ -2427,14 +2426,105 @@ def list_bug_reports():
                 line = line.strip()
                 if line:
                     try:
-                        reports.append(_json_bug.loads(line))
+                        r = _json_bug.loads(line)
+                        # Backfill missing IDs for older records
+                        if not r.get("id"):
+                            r["id"] = f"legacy_{abs(hash(r.get('timestamp','') + r.get('description','')))}"[:20]
+                        if "resolved" not in r:
+                            r["resolved"] = False
+                        reports.append(r)
                     except Exception:
                         pass
     except FileNotFoundError:
         pass
+    return reports
+
+def _write_all_bug_reports(reports):
+    """Atomically rewrite the bug report log."""
+    tmp_path = BUG_REPORT_LOG + ".tmp"
+    with open(tmp_path, "w") as f:
+        for r in reports:
+            f.write(_json_bug.dumps(r) + "\n")
+    os.replace(tmp_path, BUG_REPORT_LOG)
+
+@app.route("/api/admin/bug_reports", methods=["GET"])
+def list_bug_reports():
+    """Admin: read bug reports. Pass ?username=Kelp.
+    By default returns only active (unresolved) reports.
+    Pass &include_resolved=1 to include resolved ones too."""
+    username = request.args.get("username", "")
+    if not _is_admin(username):
+        return jsonify({"error": "Unauthorized"}), 403
+    include_resolved = request.args.get("include_resolved", "").lower() in ("1", "true", "yes")
+    all_reports = _read_all_bug_reports()
+    if not include_resolved:
+        reports = [r for r in all_reports if not r.get("resolved", False)]
+    else:
+        reports = all_reports
     # Newest first
     reports.reverse()
-    return jsonify({"ok": True, "count": len(reports), "reports": reports})
+    return jsonify({
+        "ok": True,
+        "count": len(reports),
+        "active_count": sum(1 for r in all_reports if not r.get("resolved", False)),
+        "resolved_count": sum(1 for r in all_reports if r.get("resolved", False)),
+        "reports": reports
+    })
+
+@app.route("/api/admin/bug_reports/resolve", methods=["POST"])
+def resolve_bug_report():
+    """Admin: mark a bug report as resolved by ID."""
+    username = request.args.get("username", "") or (request.json or {}).get("username", "")
+    if not _is_admin(username):
+        return jsonify({"error": "Unauthorized"}), 403
+    data = request.json or {}
+    bug_id = str(data.get("id", "")).strip()
+    if not bug_id:
+        return jsonify({"error": "id required"}), 400
+    reports = _read_all_bug_reports()
+    found = False
+    for r in reports:
+        if str(r.get("id", "")) == bug_id:
+            r["resolved"] = True
+            r["resolved_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            r["resolved_by"] = username
+            found = True
+            break
+    if not found:
+        return jsonify({"error": "Report not found"}), 404
+    try:
+        _write_all_bug_reports(reports)
+    except Exception as e:
+        print(f"[bug_report resolve error] {e}")
+        return jsonify({"error": "Could not update report."}), 500
+    return jsonify({"ok": True, "message": "Marked as resolved."})
+
+@app.route("/api/admin/bug_reports/reopen", methods=["POST"])
+def reopen_bug_report():
+    """Admin: reopen a previously resolved bug report."""
+    username = request.args.get("username", "") or (request.json or {}).get("username", "")
+    if not _is_admin(username):
+        return jsonify({"error": "Unauthorized"}), 403
+    data = request.json or {}
+    bug_id = str(data.get("id", "")).strip()
+    if not bug_id:
+        return jsonify({"error": "id required"}), 400
+    reports = _read_all_bug_reports()
+    found = False
+    for r in reports:
+        if str(r.get("id", "")) == bug_id:
+            r["resolved"] = False
+            r["resolved_at"] = None
+            r["resolved_by"] = None
+            found = True
+            break
+    if not found:
+        return jsonify({"error": "Report not found"}), 404
+    try:
+        _write_all_bug_reports(reports)
+    except Exception as e:
+        return jsonify({"error": "Could not update report."}), 500
+    return jsonify({"ok": True, "message": "Reopened."})
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5000, debug=False, allow_unsafe_werkzeug=True)
