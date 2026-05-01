@@ -1809,6 +1809,114 @@ def profile_route(username):
         }
     })
 
+# ═════════════════════════════════════════════════════════════════════════
+# ADMIN STATS — restricted to admin usernames
+# ═════════════════════════════════════════════════════════════════════════
+ADMIN_USERNAMES = {"Kelp"}  # case-insensitive
+
+def _is_admin(username):
+    if not username: return False
+    return str(username).strip().lower() in {u.lower() for u in ADMIN_USERNAMES}
+
+@app.route("/api/admin/stats", methods=["GET"])
+def admin_stats_route():
+    """Live + all-time site stats. Admin-only."""
+    username = request.args.get("username", "")
+    if not _is_admin(username):
+        return jsonify({"error": "Unauthorized"}), 403
+
+    try:
+        cleanup_stale_rooms()
+    except Exception:
+        pass
+    active_rooms = list(ROOMS.values())
+    in_progress_rooms = [r for r in active_rooms if not r.get("game_over") and r.get("players", {}).get(1, {}).get("user_id") and r.get("players", {}).get(2, {}).get("user_id")]
+    waiting_rooms = [r for r in active_rooms if not r.get("game_over") and not (r.get("players", {}).get(1, {}).get("user_id") and r.get("players", {}).get(2, {}).get("user_id"))]
+    finished_rooms = [r for r in active_rooms if r.get("game_over")]
+
+    live_user_ids = set()
+    for r in in_progress_rooms:
+        for slot in r.get("players", {}).values():
+            uid = slot.get("user_id")
+            if uid: live_user_ids.add(str(uid))
+
+    # Matchmaking queue stats (gracefully handle missing matchmaking)
+    queue_sizes = {"nfl": 0, "mlb": 0, "nba": 0, "nhl": 0}
+    queue_user_ids = set()
+    try:
+        global MATCHMAKING_QUEUES, QUEUE_LOCK
+        with QUEUE_LOCK:
+            for sport, q in MATCHMAKING_QUEUES.items():
+                queue_sizes[sport] = len(q)
+                for entry in q:
+                    queue_user_ids.add(str(entry.get("user_id")))
+    except Exception:
+        pass
+
+    live_players = len(live_user_ids | queue_user_ids)
+
+    sport_breakdown = {"nfl": 0, "mlb": 0, "nba": 0, "nhl": 0}
+    for r in in_progress_rooms:
+        sp = (r.get("sport") or "nfl").lower()
+        if sp in sport_breakdown:
+            sport_breakdown[sp] += 1
+
+    try:
+        con = sqlite3.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        total_users = con.execute("SELECT COUNT(*) AS n FROM users").fetchone()["n"]
+        users_who_played = con.execute("SELECT COUNT(*) AS n FROM users WHERE (wins + losses + draws) > 0").fetchone()["n"]
+        total_games_played = con.execute("SELECT COALESCE(SUM(wins + losses + draws), 0) AS n FROM users").fetchone()["n"]
+        total_unique_games = total_games_played // 2
+        total_wins = con.execute("SELECT COALESCE(SUM(wins), 0) AS n FROM users").fetchone()["n"]
+        total_losses = con.execute("SELECT COALESCE(SUM(losses), 0) AS n FROM users").fetchone()["n"]
+        total_draws = con.execute("SELECT COALESCE(SUM(draws), 0) AS n FROM users").fetchone()["n"]
+        # Guess log (gracefully handle missing table)
+        try:
+            top_guess_row = con.execute("SELECT player_name, SUM(guess_count) AS total FROM guess_log GROUP BY player_name ORDER BY total DESC LIMIT 1").fetchone()
+            top_guess = {"player": top_guess_row["player_name"], "count": top_guess_row["total"]} if top_guess_row else None
+            total_guess_log_rows = con.execute("SELECT COUNT(*) AS n FROM guess_log").fetchone()["n"]
+        except Exception:
+            top_guess = None
+            total_guess_log_rows = 0
+        recent_signups = con.execute("SELECT COUNT(*) AS n FROM users WHERE created_at >= datetime('now', '-7 days')").fetchone()["n"]
+        # Bug reports count (read jsonl file)
+        bug_count = 0
+        try:
+            with open("bug_reports.jsonl") as f:
+                bug_count = sum(1 for _ in f)
+        except Exception:
+            pass
+        con.close()
+    except Exception as e:
+        return jsonify({"error": "DB error"}), 500
+
+    return jsonify({
+        "ok": True,
+        "live": {
+            "live_players": live_players,
+            "in_progress_games": len(in_progress_rooms),
+            "waiting_rooms": len(waiting_rooms),
+            "finished_rooms_in_memory": len(finished_rooms),
+            "total_active_rooms": len(active_rooms),
+            "matchmaking_queue_sizes": queue_sizes,
+            "matchmaking_queue_total": sum(queue_sizes.values()),
+            "active_games_by_sport": sport_breakdown,
+        },
+        "all_time": {
+            "total_registered_users": total_users,
+            "users_who_played": users_who_played,
+            "total_games_played": total_unique_games,
+            "total_wins": total_wins,
+            "total_losses": total_losses,
+            "total_draws": total_draws,
+            "recent_signups_7d": recent_signups,
+            "top_guess": top_guess,
+            "guess_log_unique_combos": total_guess_log_rows,
+            "bug_reports_count": bug_count,
+        }
+    })
+
 # ── GENERIC SPORT ROUTE HELPERS ──────────────────────────────────────────
 def _route_start(new_state_fn, serialise_fn):
     result = _start_game_common(new_state_fn, serialise_fn)
@@ -2310,7 +2418,7 @@ def bug_report_route():
 def list_bug_reports():
     """Admin: read all bug reports. Pass ?username=Kelp."""
     username = request.args.get("username", "")
-    if username.lower() not in {"kelp"}:
+    if not _is_admin(username):
         return jsonify({"error": "Unauthorized"}), 403
     reports = []
     try:

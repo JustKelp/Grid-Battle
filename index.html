@@ -1114,6 +1114,7 @@ input::placeholder { color: var(--text-dim); }
   <div id="header-auth">
     <button class="btn btn-small btn-outline" id="btn-login-hdr" onclick="showScreen('screen-login')">Sign In</button>
     <div id="header-user-info" onclick="showProfile()" title="Click to view your profile and change favorite teams" style="display:none; font-family:'Oswald',sans-serif; font-size:1rem; color:var(--primary-gold); letter-spacing:0.08em; cursor:pointer; padding:6px 12px; border:1px solid rgba(207,196,147,0.3); border-radius:var(--radius); transition:all 0.2s;" onmouseover="this.style.borderColor='var(--primary-gold)'; this.style.background='rgba(207,196,147,0.08)';" onmouseout="this.style.borderColor='rgba(207,196,147,0.3)'; this.style.background='transparent';"></div>
+    <button class="btn btn-small btn-outline" id="btn-admin" onclick="showAdminStats()" style="display:none; margin-left:10px; border-color:var(--accent-cyan); color:var(--accent-cyan);">Stats</button>
     <button class="btn btn-small btn-outline btn-danger" id="btn-logout" onclick="handleLogout()" style="display:none; margin-left:18px;">Logout</button>
   </div>
 </header>
@@ -1509,6 +1510,24 @@ input::placeholder { color: var(--text-dim); }
 </button>
 
 <!-- ═══════════════════════════ REPORT BUG MODAL ════════════════ -->
+<!-- ═══════════════════════════ ADMIN STATS MODAL ═══════════════ -->
+<div class="modal-overlay" id="admin-modal" onclick="if(event.target===this) hideAdminStats()">
+  <div class="rules-content" style="max-width:600px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+      <h3 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:1.4rem;">Site Stats</h3>
+      <div>
+        <button class="btn btn-small btn-outline" onclick="loadAdminStats()" style="margin-right:8px; padding:4px 10px; font-size:0.7rem;">Refresh</button>
+        <button class="btn btn-small btn-outline" onclick="loadBugReports()" style="margin-right:8px; padding:4px 10px; font-size:0.7rem; border-color:var(--primary-gold); color:var(--primary-gold);">Bug Reports</button>
+        <button class="modal-close" onclick="hideAdminStats()">✕</button>
+      </div>
+    </div>
+    <div id="admin-body">
+      <p style="color:var(--text-muted); text-align:center; padding:20px;">Loading...</p>
+    </div>
+    <p style="color:var(--text-muted); font-size:0.7rem; text-align:center; margin-top:12px;">Auto-refreshes every 15 seconds while open</p>
+  </div>
+</div>
+
 <div class="modal-overlay" id="bug-modal" onclick="if(event.target===this) hideBugReport()">
   <div class="rules-content" style="max-width:480px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -1751,25 +1770,192 @@ function showToast(msg, type = 'default') {
   setTimeout(() => toast.remove(), 3500);
 }
 
+// Admin usernames that get the "Stats" button (case-insensitive)
+const ADMIN_USERNAMES = ["Kelp"];
+
+function isAdminUser() {
+  if (!currentUser || currentUser.is_guest) return false;
+  return ADMIN_USERNAMES.some(u => u.toLowerCase() === currentUser.username.toLowerCase());
+}
+
 function updateHeaderUser() {
   const btn = document.getElementById('btn-login-hdr');
   const info = document.getElementById('header-user-info');
   const logoutBtn = document.getElementById('btn-logout');
+  const adminBtn = document.getElementById('btn-admin');
   if (currentUser && !currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
     info.innerHTML = `OP: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
+    if (adminBtn) adminBtn.style.display = isAdminUser() ? 'inline-block' : 'none';
   } else if (currentUser && currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
     info.innerHTML = `GUEST: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
+    if (adminBtn) adminBtn.style.display = 'none';
   } else {
     btn.style.display = 'block';
     info.style.display = 'none';
     logoutBtn.style.display = 'none';
+    if (adminBtn) adminBtn.style.display = 'none';
   }
+}
+
+// ── ADMIN STATS DASHBOARD ──────────────────────────────────────
+let adminAutoRefreshTimer = null;
+let adminCurrentView = 'stats'; // 'stats' or 'bugs'
+
+function showAdminStats() {
+  if (!isAdminUser()) {
+    showToast('Admin access required', 'error');
+    return;
+  }
+  document.getElementById('admin-modal').classList.add('active');
+  adminCurrentView = 'stats';
+  loadAdminStats();
+  if (adminAutoRefreshTimer) clearInterval(adminAutoRefreshTimer);
+  adminAutoRefreshTimer = setInterval(() => {
+    if (adminCurrentView === 'stats') loadAdminStats();
+  }, 15000);
+}
+
+function hideAdminStats() {
+  document.getElementById('admin-modal').classList.remove('active');
+  if (adminAutoRefreshTimer) {
+    clearInterval(adminAutoRefreshTimer);
+    adminAutoRefreshTimer = null;
+  }
+}
+
+async function loadAdminStats() {
+  if (!currentUser) return;
+  adminCurrentView = 'stats';
+  const body = document.getElementById('admin-body');
+  try {
+    const url = `/api/admin/stats?username=${encodeURIComponent(currentUser.username)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Access denied (HTTP ${res.status})</p>`;
+      return;
+    }
+    const data = await res.json();
+    renderAdminStats(data);
+  } catch(e) {
+    body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Failed to load: ${e.message}</p>`;
+  }
+}
+
+async function loadBugReports() {
+  if (!currentUser) return;
+  adminCurrentView = 'bugs';
+  const body = document.getElementById('admin-body');
+  body.innerHTML = `<p style="color:var(--text-muted); text-align:center; padding:20px;">Loading bug reports...</p>`;
+  try {
+    const url = `/api/admin/bug_reports?username=${encodeURIComponent(currentUser.username)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Access denied (HTTP ${res.status})</p>`;
+      return;
+    }
+    const data = await res.json();
+    renderBugReports(data);
+  } catch(e) {
+    body.innerHTML = `<p style="color:#e85a5a; text-align:center; padding:20px;">Failed to load: ${e.message}</p>`;
+  }
+}
+
+function renderAdminStats(data) {
+  const body = document.getElementById('admin-body');
+  if (!data || !data.live || !data.all_time) {
+    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No data</p>';
+    return;
+  }
+  const live = data.live;
+  const all = data.all_time;
+  const now = new Date().toLocaleTimeString();
+
+  let html = `
+    <h4 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:0.85rem; margin:0 0 10px;">Live Now <span style="color:var(--text-muted); font-weight:normal; font-size:0.7rem;">(updated ${now})</span></h4>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:16px;">
+      ${statCard('Active Players', live.live_players, 'var(--primary-gold)')}
+      ${statCard('Games In Progress', live.in_progress_games, 'var(--accent-cyan)')}
+      ${statCard('In Queue', live.matchmaking_queue_total, 'var(--text-primary)')}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:18px;">
+      ${miniCard('NFL', live.active_games_by_sport.nfl, live.matchmaking_queue_sizes.nfl)}
+      ${miniCard('MLB', live.active_games_by_sport.mlb, live.matchmaking_queue_sizes.mlb)}
+      ${miniCard('NBA', live.active_games_by_sport.nba, live.matchmaking_queue_sizes.nba)}
+      ${miniCard('NHL', live.active_games_by_sport.nhl, live.matchmaking_queue_sizes.nhl)}
+    </div>
+    <h4 style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); letter-spacing:0.08em; font-size:0.85rem; margin:0 0 10px;">All Time</h4>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+      ${statCard('Total Users', all.total_registered_users, 'var(--primary-gold)')}
+      ${statCard('Players Who Played', all.users_who_played, 'var(--primary-gold)')}
+      ${statCard('Total Games', all.total_games_played, 'var(--primary-gold)')}
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+      ${statCard('Total Wins', all.total_wins, 'var(--text-primary)')}
+      ${statCard('Total Losses', all.total_losses, 'var(--text-primary)')}
+      ${statCard('Total Draws', all.total_draws, 'var(--text-primary)')}
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+      ${statCard('New Signups (7d)', all.recent_signups_7d, 'var(--accent-cyan)')}
+      ${statCard('Bug Reports', all.bug_reports_count || 0, '#e85a5a')}
+      ${statCard('Guess Combos', all.guess_log_unique_combos, 'var(--accent-cyan)')}
+    </div>
+  `;
+  if (all.top_guess) {
+    html += `<p style="color:var(--text-muted); font-size:0.8rem; margin-top:14px; text-align:center;">Most-guessed player: <span style="color:var(--primary-gold); font-weight:600;">${all.top_guess.player}</span> (${all.top_guess.count} times)</p>`;
+  }
+  body.innerHTML = html;
+}
+
+function renderBugReports(data) {
+  const body = document.getElementById('admin-body');
+  if (!data || !data.reports) {
+    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:20px;">No bug reports</p>';
+    return;
+  }
+  if (data.count === 0) {
+    body.innerHTML = '<p style="color:var(--text-muted); text-align:center; padding:30px;">No bug reports yet 🎉</p>';
+    return;
+  }
+  const escapeHtml2 = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  let html = `<p style="color:var(--text-muted); font-size:0.75rem; text-align:center; margin-bottom:14px;">Showing ${data.count} report${data.count === 1 ? '' : 's'} — newest first</p>`;
+  data.reports.forEach((r, i) => {
+    const ts = r.timestamp ? new Date(r.timestamp).toLocaleString() : 'Unknown time';
+    html += `
+      <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.15); border-radius:var(--radius); padding:12px 14px; margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-family:'Oswald',sans-serif; color:var(--accent-cyan); font-size:0.75rem; letter-spacing:0.05em; text-transform:uppercase;">${escapeHtml2(r.type || 'other')}</span>
+          <span style="color:var(--text-dim); font-size:0.7rem;">${escapeHtml2(ts)}</span>
+        </div>
+        <p style="color:var(--text-primary); font-size:0.85rem; line-height:1.5; margin:0 0 8px;">${escapeHtml2(r.description)}</p>
+        <div style="color:var(--text-muted); font-size:0.7rem;">
+          <strong>From:</strong> ${escapeHtml2(r.user || 'anonymous')}${r.contact ? ` (${escapeHtml2(r.contact)})` : ''}
+          ${r.sport ? ` &middot; <strong>Sport:</strong> ${escapeHtml2(r.sport)}` : ''}
+          ${r.screen ? ` &middot; <strong>Screen:</strong> ${escapeHtml2(r.screen)}` : ''}
+        </div>
+      </div>
+    `;
+  });
+  body.innerHTML = html;
+}
+
+function statCard(label, value, color) {
+  return `<div style="background:rgba(0,0,0,0.3); border:1px solid rgba(207,196,147,0.12); border-radius:var(--radius); padding:10px 8px; text-align:center;">
+    <div style="color:var(--text-muted); font-size:0.65rem; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:4px;">${label}</div>
+    <div style="color:${color}; font-family:'Oswald',sans-serif; font-size:1.5rem; font-weight:700;">${value}</div>
+  </div>`;
+}
+
+function miniCard(sport, games, queue) {
+  return `<div style="background:rgba(0,0,0,0.2); border:1px solid rgba(207,196,147,0.08); border-radius:var(--radius); padding:6px 4px; text-align:center;">
+    <div style="color:var(--text-muted); font-size:0.6rem; letter-spacing:0.05em; margin-bottom:2px;">${sport}</div>
+    <div style="color:var(--text-primary); font-size:0.75rem;"><span style="color:var(--accent-cyan); font-weight:700;">${games}</span> games &middot; ${queue} queued</div>
+  </div>`;
 }
 
 // ── SESSION PERSISTENCE ────────────────────────────────────────
@@ -3036,6 +3222,7 @@ document.addEventListener('keydown', (e) => {
     if (document.getElementById('rules-modal').classList.contains('active')) hideRules();
     if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
     if (document.getElementById('bug-modal') && document.getElementById('bug-modal').classList.contains('active')) hideBugReport();
+    if (document.getElementById('admin-modal') && document.getElementById('admin-modal').classList.contains('active')) hideAdminStats();
   }
 });
 
