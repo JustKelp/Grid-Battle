@@ -29,6 +29,9 @@ import sys
 import unicodedata
 import time
 import string
+import secrets
+import hmac
+import hashlib
 import json as _json
 import threading
 import flask
@@ -37,8 +40,29 @@ from flask_socketio import SocketIO, join_room as sio_join_room, emit
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "grid-game-secret-change-me")
-socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=60, ping_timeout=30, async_mode="eventlet")
+
+# === SECURITY: Forced secret key ===
+_env_secret = os.environ.get("SECRET_KEY", "")
+if not _env_secret or _env_secret == "grid-game-secret-change-me":
+    _env_secret = secrets.token_urlsafe(64)
+    print("[SECURITY WARNING] SECRET_KEY not set — generated random key. "
+          "Sessions will not survive restart. Set SECRET_KEY env var in production.")
+app.secret_key = _env_secret
+
+# === SECURITY: CORS lockdown ===
+ALLOWED_ORIGINS = [
+    "https://statcheck.duckdns.org",
+    "http://statcheck.duckdns.org",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+]
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=ALLOWED_ORIGINS,
+    ping_interval=60,
+    ping_timeout=30,
+    async_mode="eventlet"
+)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "users.db")
 CACHE_DIR = os.path.join(os.path.dirname(__file__), "cache")
@@ -86,12 +110,21 @@ def cleanup_stale_rooms():
         ROOMS.pop(rid, None)
 
 # ── RATE LIMITING (simple in-memory) ─────────────────────────────────────
-_rate_limit_store = {}  # {ip: [timestamp, ...]}
-_RATE_LIMIT_MAX = 10
-_RATE_LIMIT_WINDOW = 60  # seconds
+_rate_limit_store = {}
+_RATE_LIMIT_MAX = 30
+_RATE_LIMIT_WINDOW = 60
+
+# Stricter limits for auth endpoints — prevent brute-force
+_auth_limit_store = {}
+_AUTH_RATE_LIMIT_MAX = 5
+_AUTH_RATE_LIMIT_WINDOW = 60
+
+# Account lockout — track failed logins per username
+_login_failures = {}
+_LOGIN_LOCKOUT_THRESHOLD = 5
+_LOGIN_LOCKOUT_DURATION = 900  # 15 minutes
 
 def _check_rate_limit(ip):
-    """Returns True if rate-limited (too many requests)."""
     now = time.time()
     timestamps = _rate_limit_store.get(ip, [])
     timestamps = [t for t in timestamps if now - t < _RATE_LIMIT_WINDOW]
@@ -101,6 +134,94 @@ def _check_rate_limit(ip):
     timestamps.append(now)
     _rate_limit_store[ip] = timestamps
     return False
+
+def _check_auth_rate_limit(ip):
+    """Stricter limit for register/login: 5/min/ip."""
+    now = time.time()
+    timestamps = _auth_limit_store.get(ip, [])
+    timestamps = [t for t in timestamps if now - t < _AUTH_RATE_LIMIT_WINDOW]
+    if len(timestamps) >= _AUTH_RATE_LIMIT_MAX:
+        _auth_limit_store[ip] = timestamps
+        return True
+    timestamps.append(now)
+    _auth_limit_store[ip] = timestamps
+    return False
+
+def _is_account_locked(username):
+    now = time.time()
+    failures = _login_failures.get(username.lower(), [])
+    failures = [t for t in failures if now - t < _LOGIN_LOCKOUT_DURATION]
+    _login_failures[username.lower()] = failures
+    return len(failures) >= _LOGIN_LOCKOUT_THRESHOLD
+
+def _record_login_failure(username):
+    now = time.time()
+    failures = _login_failures.get(username.lower(), [])
+    failures.append(now)
+    _login_failures[username.lower()] = failures
+
+def _clear_login_failures(username):
+    _login_failures.pop(username.lower(), None)
+
+# ── AUTH TOKENS (HMAC-signed, stateless) ──────────────────────────
+_TOKEN_LIFETIME = 86400 * 30  # 30 days
+
+def _make_token(user_id, username):
+    expiry = int(time.time()) + _TOKEN_LIFETIME
+    payload = f"{user_id}:{username}:{expiry}"
+    sig = hmac.new(
+        app.secret_key.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    return f"{payload}:{sig}"
+
+def _verify_token(token):
+    if not token or not isinstance(token, str): return None
+    parts = token.split(":")
+    if len(parts) != 4: return None
+    user_id, username, expiry_str, sig = parts
+    try:
+        expiry = int(expiry_str)
+    except ValueError:
+        return None
+    if expiry < int(time.time()):
+        return None
+    expected_payload = f"{user_id}:{username}:{expiry_str}"
+    expected_sig = hmac.new(
+        app.secret_key.encode("utf-8"),
+        expected_payload.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_sig, sig):
+        return None
+    return {"user_id": user_id, "username": username, "expiry": expiry}
+
+def _require_auth():
+    auth_header = request.headers.get("Authorization", "")
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:].strip()
+    elif request.headers.get("X-Auth-Token"):
+        token = request.headers.get("X-Auth-Token").strip()
+    elif request.json and isinstance(request.json, dict):
+        token = request.json.get("auth_token")
+    if not token: return None
+    return _verify_token(token)
+
+def _auth_or_401():
+    claims = _require_auth()
+    if not claims:
+        return None, (jsonify({"error": "Authentication required."}), 401)
+    return claims, None
+
+def _validate_password(password):
+    """At least 8 chars, must contain a letter and a number. Max 200 to prevent DoS."""
+    if not isinstance(password, str): return False
+    if len(password) < 8 or len(password) > 200: return False
+    has_letter = any(c.isalpha() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    return has_letter and has_digit
 
 # ── CONSTANTS ──────────────────────────────────────────────────────────────
 NFL_TEAMS = [
@@ -659,6 +780,12 @@ _NHL_CROSS_COUNT  = _precompute_crossover_counts(NHL_PLAYERS_DB)
 
 _CURRENT_YEAR_RARITY = 2026  # Used for era adjustment in rarity calc
 
+def _tiebreak_offset(player, team_a, team_b):
+    """Deterministic 0.0000-0.0099 offset so no two players score identically."""
+    seed = f"{player.get('name','')}|{team_a}|{team_b}"
+    h = hashlib.md5(seed.encode("utf-8")).hexdigest()
+    return (int(h[:6], 16) % 10000) / 1_000_000
+
 def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_count, stat_total, stat_count):
     """
     Rarity formula:
@@ -688,7 +815,8 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
         base = 99 - 98 / (1 + max(0.01, combined / 2.0) ** 1.2)
         era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
         rarity = base - era_reduction
-        return round(max(1, min(99, rarity)) / 100, 4)
+        rarity = max(1, min(99, rarity)) + _tiebreak_offset(player, team_a, team_b)
+        return round(rarity / 100, 6)
 
     if team_a.startswith("STAT:"):
         stat_key = team_a.split(":", 1)[1]
@@ -705,7 +833,8 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
             base *= 1.05
         era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
         rarity = base - era_reduction
-        return round(max(1, min(99, rarity)) / 100, 4)
+        rarity = max(1, min(99, rarity)) + _tiebreak_offset(player, team_a, team_b)
+        return round(rarity / 100, 6)
 
     # Stat in column (team in row)
     if team_b.startswith("STAT:"):
@@ -723,7 +852,8 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
             base *= 1.05
         era_reduction = min(30, (years_ago / 3) ** 0.85) if years_ago > 0 else 0
         rarity = base - era_reduction
-        return round(max(1, min(99, rarity)) / 100, 4)
+        rarity = max(1, min(99, rarity)) + _tiebreak_offset(player, team_a, team_b)
+        return round(rarity / 100, 6)
 
     # ── SAME-TEAM FALLBACK (shouldn't trigger with valid board) ──
     if team_a == team_b:
@@ -736,7 +866,8 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
         rarity = 99 - 98 / (1 + max(0.01, ratio) ** 1.2)
         era_reduction = min(25, (years_ago / 4) ** 0.85) if years_ago > 0 else 0
         rarity -= era_reduction
-        return round(max(1, min(99, rarity)) / 100, 4)
+        rarity = max(1, min(99, rarity)) + _tiebreak_offset(player, team_a, team_b)
+        return round(rarity / 100, 6)
 
     # ── TEAM-TEAM CROSSOVER RARITY ─────────────────────────
     g_a = player.get(games_key, {}).get(team_a, 0)
@@ -753,7 +884,8 @@ def _calc_rarity_common(player, team_a, team_b, games_key, cross_total, cross_co
     # Era reduction: older players score lower
     era_reduction = min(25, (years_ago / 4) ** 0.85) if years_ago > 0 else 0
     rarity = base - era_reduction
-    return round(max(1, min(99, rarity)) / 100, 4)
+    rarity = max(1, min(99, rarity)) + _tiebreak_offset(player, team_a, team_b)
+    return round(rarity / 100, 6)
 
 def calc_rarity(player, team_a, team_b):
     return _calc_rarity_common(player, team_a, team_b, "weeks_by_team", _NFL_CROSS_TOTAL, _NFL_CROSS_COUNT, _NFL_STAT_CACHE, _NFL_STAT_COUNT)
@@ -770,6 +902,48 @@ def calc_nhl_rarity(player, team_a, team_b):
 # ── BOARD GENERATION ──────────────────────────────────────────────────────
 WIN_LINES = [(0,1,2),(3,4,5),(6,7,8),(0,3,6),(1,4,7),(2,5,8),(0,4,8),(2,4,6)]
 
+MIN_INTERSECTION_PLAYERS = 10  # Each cell must have at least this many valid players
+
+def _count_intersection_players(team_a, team_b, players_db):
+    """How many players satisfy both row+col? Stops counting at MIN_INTERSECTION_PLAYERS."""
+    a_is_stat = team_a.startswith("STAT:")
+    b_is_stat = team_b.startswith("STAT:")
+    count = 0
+    if a_is_stat and b_is_stat:
+        sk_a = team_a.split(":", 1)[1]
+        sk_b = team_b.split(":", 1)[1]
+        for p in players_db:
+            ach = p.get("achievements", {})
+            if sk_a in ach and sk_b in ach:
+                count += 1
+                if count >= MIN_INTERSECTION_PLAYERS: return count
+    elif a_is_stat:
+        sk = team_a.split(":", 1)[1]
+        for p in players_db:
+            if team_b in p.get("teams", []) and team_b in p.get("achievements", {}).get(sk, []):
+                count += 1
+                if count >= MIN_INTERSECTION_PLAYERS: return count
+    elif b_is_stat:
+        sk = team_b.split(":", 1)[1]
+        for p in players_db:
+            if team_a in p.get("teams", []) and team_a in p.get("achievements", {}).get(sk, []):
+                count += 1
+                if count >= MIN_INTERSECTION_PLAYERS: return count
+    else:
+        for p in players_db:
+            if team_a in p.get("teams", []) and team_b in p.get("teams", []):
+                count += 1
+                if count >= MIN_INTERSECTION_PLAYERS: return count
+    return count
+
+def _board_has_min_players(rows, cols, players_db):
+    """All 9 cells must have at least MIN_INTERSECTION_PLAYERS valid players."""
+    for r in rows:
+        for c in cols:
+            if _count_intersection_players(r, c, players_db) < MIN_INTERSECTION_PLAYERS:
+                return False
+    return True
+
 def pick_teams_with_shared_players(pool, index, needed=3, attempts=100):
     for _ in range(attempts):
         sample = random.sample(pool, needed)
@@ -781,48 +955,63 @@ def pick_teams_with_shared_players(pool, index, needed=3, attempts=100):
     return random.sample(pool, needed)
 
 def _stat_axis_has_valid_cells(stat_key, opposing_axis, players_db):
-    """Each cell on the opposing axis must have at least one valid player.
-    Opposing axis can mix team codes and STAT: entries (for stat-vs-stat cells)."""
+    """Each cell on the opposing axis must have at least MIN_INTERSECTION_PLAYERS valid players."""
     for item in opposing_axis:
         if item.startswith("STAT:"):
             other_key = item.split(":", 1)[1]
-            if not any(stat_key in p.get("achievements", {}) and other_key in p.get("achievements", {}) for p in players_db):
-                return False
+            count = sum(1 for p in players_db
+                        if stat_key in p.get("achievements", {})
+                        and other_key in p.get("achievements", {}))
         else:
-            if not any(item in p.get("teams", []) and item in p.get("achievements", {}).get(stat_key, []) for p in players_db):
-                return False
+            count = sum(1 for p in players_db
+                        if item in p.get("teams", [])
+                        and item in p.get("achievements", {}).get(stat_key, []))
+        if count < MIN_INTERSECTION_PLAYERS:
+            return False
     return True
 
 def _new_board_common(teams, team_index, stat_categories, players_db):
-    rows = pick_teams_with_shared_players(teams, team_index)
-    cols = pick_teams_with_shared_players(teams, team_index)
-    att = 0
-    while set(rows) & set(cols) and att < 50:
-        cols = pick_teams_with_shared_players(teams, team_index); att += 1
-    stat_metas = {}
-    num_stats = random.choices([0, 1, 2], weights=[20, 55, 25], k=1)[0]
-    if num_stats == 0 or not stat_categories:
-        return rows, cols, stat_metas
-    # Each stat can land on a row OR a column slot, max 2 total
-    avail = [("row", 0), ("row", 1), ("row", 2), ("col", 0), ("col", 1), ("col", 2)]
-    random.shuffle(avail)
-    placements = avail[:num_stats]
-    cats = list(stat_categories); random.shuffle(cats)
-    for axis, pos in placements:
-        for cat in cats:
-            if cat["key"] in stat_metas:
-                continue
-            if sum(1 for p in players_db if cat["key"] in p.get("achievements", {})) < 10:
-                continue
-            opposing = list(cols) if axis == "row" else list(rows)
-            if _stat_axis_has_valid_cells(cat["key"], opposing, players_db):
+    """Generate a board where every cell has at least MIN_INTERSECTION_PLAYERS valid answers.
+    Tries up to 80 board configurations before giving up and returning the last attempt."""
+    rows, cols, stat_metas = None, None, {}
+    for board_attempt in range(80):
+        rows = pick_teams_with_shared_players(teams, team_index)
+        cols = pick_teams_with_shared_players(teams, team_index)
+        att = 0
+        while set(rows) & set(cols) and att < 50:
+            cols = pick_teams_with_shared_players(teams, team_index); att += 1
+
+        if not _board_has_min_players(rows, cols, players_db):
+            continue
+
+        stat_metas = {}
+        num_stats = random.choices([0, 1, 2], weights=[20, 55, 25], k=1)[0]
+        if num_stats == 0 or not stat_categories:
+            return rows, cols, stat_metas
+
+        avail = [("row", 0), ("row", 1), ("row", 2), ("col", 0), ("col", 1), ("col", 2)]
+        random.shuffle(avail)
+        placements = avail[:num_stats]
+        cats = list(stat_categories); random.shuffle(cats)
+        for axis, pos in placements:
+            for cat in cats:
+                if cat["key"] in stat_metas:
+                    continue
+                if sum(1 for p in players_db if cat["key"] in p.get("achievements", {})) < MIN_INTERSECTION_PLAYERS:
+                    continue
+                trial_rows = list(rows); trial_cols = list(cols)
                 if axis == "row":
-                    rows[pos] = f"STAT:{cat['key']}"
+                    trial_rows[pos] = f"STAT:{cat['key']}"
                 else:
-                    cols[pos] = f"STAT:{cat['key']}"
-                stat_metas[cat["key"]] = {"key": cat["key"], "label": cat["label"], "desc": cat["desc"]}
-                break
-    return rows, cols, stat_metas
+                    trial_cols[pos] = f"STAT:{cat['key']}"
+                if _board_has_min_players(trial_rows, trial_cols, players_db):
+                    rows, cols = trial_rows, trial_cols
+                    stat_metas[cat["key"]] = {"key": cat["key"], "label": cat["label"], "desc": cat["desc"]}
+                    break
+        if _board_has_min_players(rows, cols, players_db):
+            return rows, cols, stat_metas
+
+    return rows, cols, {}
 
 def new_board():       return _new_board_common(NFL_TEAMS, TEAM_INDEX, NFL_STAT_CATEGORIES, PLAYERS_DB)
 def mlb_new_board():   return _new_board_common(MLB_TEAMS, MLB_TEAM_INDEX, MLB_STAT_CATEGORIES, MLB_PLAYERS_DB)
@@ -1169,6 +1358,8 @@ def _do_guess(s, db, calc_fn, serialise_fn, team_names_map, aliases, correct_phr
     current_turn = s["turn"]
     slot = s["players"][current_turn]
     uid = slot["user_id"]
+    # Voluntary action — reset AFK counter
+    slot["consecutive_timeouts"] = 0
 
     if player["name"].lower() in {n.lower() for n in s["used_players"]}:
         return _make_miss(s, "already_used", f"{player['name']} has already been used this game.", serialise_fn, win_phrases)
@@ -1414,10 +1605,41 @@ def _do_hint(s, db, calc_fn, serialise_fn, sport):
         "state": serialised
     })
 
-def _do_pass(s, serialise_fn, win_phrases):
-    """Current player passes their turn without guessing."""
+def _do_pass(s, serialise_fn, win_phrases, is_timeout=False):
+    """Current player passes their turn. is_timeout=True means timer expired.
+    Two consecutive timer-expiry passes = AFK kick (forfeit-style loss)."""
     if s["game_over"]:
         return jsonify({"error": "Game is already over."}), 400
+
+    current_turn = s["turn"]
+    slot = s["players"][current_turn]
+    if is_timeout:
+        timeouts = slot.get("consecutive_timeouts", 0) + 1
+        slot["consecutive_timeouts"] = timeouts
+        if timeouts >= 2:
+            winner_turn = 2 if current_turn == 1 else 1
+            wname = s["players"][winner_turn]["username"]
+            fname = slot["username"]
+            s["game_over"] = True
+            s["winner"] = winner_turn
+            s["win_reason"] = f"{fname} kicked for inactivity — {wname} wins!"
+            _flush_stats(s, winner_turn)
+            room_id = s.get("room_id")
+            serialised = serialise_fn(s)
+            if room_id:
+                save_room(room_id, s)
+                _emit_update(room_id, serialised)
+            return jsonify({
+                "result": "afk_kicked",
+                "message": s["win_reason"],
+                "game_over": True,
+                "winner": winner_turn,
+                "win_reason": s["win_reason"],
+                "state": serialised
+            })
+    else:
+        slot["consecutive_timeouts"] = 0
+
     s["miss_streak"] += 1
     s["turn_number"] += 1
     _resolve_win(s, win_phrases)
@@ -1659,10 +1881,10 @@ def _user_json(user, guest=False):
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    if _check_rate_limit(request.remote_addr):
+    if _check_auth_rate_limit(request.remote_addr):
         return jsonify({"error": "Too many requests. Please wait a minute."}), 429
     data = request.json or {}
-    username, password = str(data.get("username", "")).strip(), str(data.get("password", "")).strip()
+    username, password = str(data.get("username", "")).strip(), str(data.get("password", ""))
     nfl_mascot = str(data.get("nfl_mascot", "KC")).strip().upper()
     mlb_mascot = str(data.get("mlb_mascot", "NYY")).strip().upper()
     nba_mascot = str(data.get("nba_mascot", "LAL")).strip().upper()
@@ -1674,47 +1896,58 @@ def register():
     if not username or not password: return jsonify({"error": "Username and password required."}), 400
     if not _validate_username(username):
         return jsonify({"error": "Username must be 2\u201320 characters, alphanumeric and underscores only."}), 400
+    if not _validate_password(password):
+        return jsonify({"error": "Password must be 8\u2013200 characters and include both a letter and a number."}), 400
     user = create_user(username, password, nfl_mascot, mlb_mascot, nba_mascot, nhl_mascot)
     if not user: return jsonify({"error": "Username already taken."}), 409
-    return jsonify({"ok": True, "user": _user_json(user)})
+    token = _make_token(str(user["id"]), user["username"])
+    return jsonify({"ok": True, "user": _user_json(user), "auth_token": token})
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
-    if _check_rate_limit(request.remote_addr):
+    if _check_auth_rate_limit(request.remote_addr):
         return jsonify({"error": "Too many requests. Please wait a minute."}), 429
     data = request.json or {}
-    username, password = str(data.get("username", "")).strip(), str(data.get("password", "")).strip()
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
     if not username: return jsonify({"error": "Username required."}), 400
     if not password: return jsonify({"error": "Password required."}), 400
+    if _is_account_locked(username):
+        return jsonify({"error": "Account temporarily locked due to repeated failed logins. Try again in 15 minutes."}), 429
     user = get_user(username)
-    if not user: return jsonify({"error": "No account found with that username."}), 401
-    # Support both new werkzeug hashes and legacy SHA-256 for backward compat
+    if not user:
+        _record_login_failure(username)
+        return jsonify({"error": "Incorrect username or password."}), 401
     stored = user["password_hash"]
     if stored.startswith("pbkdf2:") or stored.startswith("scrypt:"):
         valid = check_password_hash(stored, password)
     else:
-        import hashlib
         valid = stored == hashlib.sha256(password.encode()).hexdigest()
         if valid:
-            # Silently upgrade to new hash on successful legacy login
             con = sqlite3.connect(DB_PATH)
             con.execute("UPDATE users SET password_hash=? WHERE id=?",
                         (generate_password_hash(password), user["id"]))
             con.commit(); con.close()
-    if not valid: return jsonify({"error": "Incorrect password."}), 401
-    return jsonify({"ok": True, "user": _user_json(user)})
+    if not valid:
+        _record_login_failure(username)
+        return jsonify({"error": "Incorrect username or password."}), 401
+    _clear_login_failures(username)
+    token = _make_token(str(user["id"]), user["username"])
+    return jsonify({"ok": True, "user": _user_json(user), "auth_token": token})
 
 @app.route("/api/auth/guest", methods=["POST"])
 def guest_login():
-    guest_id = f"guest_{int(time.time()*1000)%999999}"
+    guest_id = f"guest_{secrets.token_hex(8)}"
+    suffix = secrets.token_hex(2).upper()
     user = {
-        "id": guest_id, "username": f"Guest_{guest_id[-4:]}",
+        "id": guest_id, "username": f"Guest_{suffix}",
         "nfl_mascot": random.choice(NFL_TEAMS), "mlb_mascot": random.choice(MLB_TEAMS),
         "nba_mascot": random.choice(NBA_TEAMS), "nhl_mascot": random.choice(NHL_TEAMS),
         "lifetime_correct": 0, "lifetime_total": 0,
         "wins": 0, "losses": 0, "draws": 0, "win_streak": 0, "best_streak": 0
     }
-    return jsonify({"ok": True, "user": _user_json(user, guest=True)})
+    token = _make_token(guest_id, user["username"])
+    return jsonify({"ok": True, "user": _user_json(user, guest=True), "auth_token": token})
 
 @app.route("/api/auth/bot", methods=["POST"])
 def create_bot():
@@ -1722,7 +1955,7 @@ def create_bot():
     difficulty = data.get("difficulty", "medium")
     if difficulty not in ("easy", "medium", "hard"): difficulty = "medium"
     name = data.get("name", "") or {"easy": "Rookie Bot", "medium": "Pro Bot", "hard": "Legend Bot"}[difficulty]
-    bot_id = f"bot_{difficulty}_{int(time.time()*1000)%999999}"
+    bot_id = f"bot_{difficulty}_{secrets.token_hex(4)}"
     user = {
         "id": bot_id, "username": name,
         "nfl_mascot": random.choice(NFL_TEAMS), "mlb_mascot": random.choice(MLB_TEAMS),
@@ -1732,15 +1965,48 @@ def create_bot():
     }
     return jsonify({"ok": True, "user": {**_user_json(user), "is_bot": True, "bot_difficulty": difficulty}})
 
+@app.route("/api/auth/change_password", methods=["POST"])
+def change_password_route():
+    if _check_auth_rate_limit(request.remote_addr):
+        return jsonify({"error": "Too many requests."}), 429
+    claims, err = _auth_or_401()
+    if err: return err
+    data = request.json or {}
+    current_password = str(data.get("current_password", ""))
+    new_password = str(data.get("new_password", ""))
+    if not current_password or not new_password:
+        return jsonify({"error": "Current and new password required."}), 400
+    if not _validate_password(new_password):
+        return jsonify({"error": "New password must be 8\u2013200 characters and include both a letter and a number."}), 400
+    username = claims["username"]
+    user = get_user(username)
+    if not user: return jsonify({"error": "User not found."}), 404
+    stored = user["password_hash"]
+    if stored.startswith("pbkdf2:") or stored.startswith("scrypt:"):
+        valid = check_password_hash(stored, current_password)
+    else:
+        valid = stored == hashlib.sha256(current_password.encode()).hexdigest()
+    if not valid:
+        return jsonify({"error": "Current password is incorrect."}), 401
+    new_hash = generate_password_hash(new_password)
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE users SET password_hash=? WHERE id=?", (new_hash, user["id"]))
+    con.commit(); con.close()
+    return jsonify({"ok": True, "message": "Password updated successfully."})
+
 @app.route("/api/auth/mascot", methods=["POST"])
 def update_mascot_route():
+    # AUTH REQUIRED — only the user themselves can change their favorite team
+    claims, err = _auth_or_401()
+    if err: return err
     data = request.json or {}
-    username = str(data.get("username", "")).strip()
     sport = str(data.get("sport", "nfl")).strip().lower()
     mascot = str(data.get("mascot", "")).strip().upper()
     valid_sets = {"nfl": NFL_TEAMS, "mlb": MLB_TEAMS, "nba": NBA_TEAMS, "nhl": NHL_TEAMS}
     if sport not in valid_sets: return jsonify({"error": "Invalid sport."}), 400
     if mascot not in valid_sets[sport]: return jsonify({"error": "Invalid team."}), 400
+    # Username from verified token, not request body
+    username = claims["username"]
     user = get_user(username)
     if not user: return jsonify({"error": "User not found."}), 404
     update_mascot(user["id"], sport, mascot)
@@ -1954,7 +2220,9 @@ def _route_pass(serialise_fn, win_phrases):
     if not room_id: return jsonify({"error": "room_id required."}), 400
     s = get_room(room_id)
     if s is None: return jsonify({"error": "No active game for this room."}), 400
-    return _do_pass(s, serialise_fn, win_phrases)
+    data = request.json or {}
+    is_timeout = bool(data.get("is_timeout", False))
+    return _do_pass(s, serialise_fn, win_phrases, is_timeout=is_timeout)
 
 def _route_forfeit(serialise_fn, win_phrases):
     room_id = _get_room_id_from_request()

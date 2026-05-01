@@ -1501,6 +1501,17 @@ input::placeholder { color: var(--text-dim); }
   </div>
 </div>
 
+<!-- ═══════════════════════════ HEADER RULES POPUP ══════════════ -->
+<div class="modal-overlay" id="header-rules-modal" onclick="if(event.target===this) hideHeaderRules()">
+  <div class="rules-content" style="max-width:480px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 id="header-rules-title" style="font-family:'Oswald',sans-serif; color:var(--primary-gold); letter-spacing:0.08em; font-size:1.2rem;">Header</h3>
+      <button class="modal-close" onclick="hideHeaderRules()">✕</button>
+    </div>
+    <p id="header-rules-body" style="font-size:0.9rem; line-height:1.6; color:var(--text-primary);"></p>
+  </div>
+</div>
+
 <!-- ═══════════════════════════ TOASTS ══════════════════════════ -->
 <div class="toast-container" id="toast-container"></div>
 
@@ -1582,6 +1593,7 @@ let pendingProposalData = null;
 let turnTimerInterval = null;
 let turnTimerSeconds = 0;
 const TURN_TIME_LIMIT = 90; // 1:30 per half-turn
+const SUDDEN_DEATH_TIME_LIMIT = 45; // 0:45 per half-turn during sudden death
 
 const WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 
@@ -1715,26 +1727,48 @@ function escapeHtml(text) {
   return d.innerHTML;
 }
 
+let authToken = null;  // set on login/register/guest, sent with every API call
+
 async function apiCall(endpoint, method = 'GET', body = null, silent = false) {
   const options = {
     method,
     headers: { 'Content-Type': 'application/json' }
   };
+  if (authToken) {
+    options.headers['Authorization'] = `Bearer ${authToken}`;
+  }
   if (body) {
     if (method === 'POST' && currentRoomId && !body.room_id) {
       body.room_id = currentRoomId;
     }
     options.body = JSON.stringify(body);
   }
-  // For GET with room_id
   if (method === 'GET' && currentRoomId) {
     const sep = endpoint.includes('?') ? '&' : '?';
     endpoint += `${sep}room_id=${encodeURIComponent(currentRoomId)}`;
   }
   try {
     const res = await fetch(endpoint, options);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || data.message || 'API Error');
+    // Read as text first so we can recover from non-JSON server errors
+    const rawText = await res.text();
+    let data = {};
+    try {
+      data = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      const snippet = rawText ? rawText.substring(0, 100).replace(/<[^>]*>/g, '').trim() : '';
+      throw new Error(snippet || `Server error (HTTP ${res.status})`);
+    }
+    if (!res.ok) {
+      // 401 means token is invalid/expired — force re-login
+      if (res.status === 401 && authToken) {
+        authToken = null;
+        currentUser = null;
+        try { localStorage.removeItem('statcheck_user'); localStorage.removeItem('statcheck_token'); } catch(e) {}
+        if (!silent) showToast('Session expired — please sign in again', 'error');
+        showScreen('screen-login');
+      }
+      throw new Error(data.error || data.message || `Request failed (HTTP ${res.status})`);
+    }
     return data;
   } catch (err) {
     if (!silent) showToast(err.message, 'error');
@@ -1786,13 +1820,13 @@ function updateHeaderUser() {
   if (currentUser && !currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
-    info.innerHTML = `OP: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
+    info.innerHTML = `OP: ${escapeHtml(currentUser.username.toUpperCase())} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
     if (adminBtn) adminBtn.style.display = isAdminUser() ? 'inline-block' : 'none';
   } else if (currentUser && currentUser.is_guest) {
     btn.style.display = 'none';
     info.style.display = 'inline-block';
-    info.innerHTML = `GUEST: ${currentUser.username.toUpperCase()} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
+    info.innerHTML = `GUEST: ${escapeHtml(currentUser.username.toUpperCase())} <span style="font-size:0.7rem; opacity:0.7; margin-left:4px;">▾</span>`;
     logoutBtn.style.display = 'inline-block';
     if (adminBtn) adminBtn.style.display = 'none';
   } else {
@@ -2045,17 +2079,22 @@ function miniCard(sport, games, queue) {
 // ── SESSION PERSISTENCE ────────────────────────────────────────
 function saveSession() {
   if (currentUser && !currentUser.is_guest) {
-    try { localStorage.setItem('statcheck_user', JSON.stringify(currentUser)); } catch(e) {}
+    try {
+      localStorage.setItem('statcheck_user', JSON.stringify(currentUser));
+      if (authToken) localStorage.setItem('statcheck_token', authToken);
+    } catch(e) {}
   }
 }
 
 function loadSession() {
   try {
     const saved = localStorage.getItem('statcheck_user');
-    if (saved) {
+    const savedToken = localStorage.getItem('statcheck_token');
+    if (saved && savedToken) {
       const parsed = JSON.parse(saved);
       if (parsed && parsed.username && !parsed.is_guest) {
         currentUser = parsed;
+        authToken = savedToken;
         updateHeaderUser();
         showScreen('screen-lobby');
         return true;
@@ -2066,12 +2105,16 @@ function loadSession() {
 }
 
 function handleLogout() {
-  try { localStorage.removeItem('statcheck_user'); } catch(e) {}
+  try {
+    localStorage.removeItem('statcheck_user');
+    localStorage.removeItem('statcheck_token');
+  } catch(e) {}
   if (socket) {
     try { socket.disconnect(); } catch(e) {}
     socket = null;
   }
   currentUser = null;
+  authToken = null;
   currentOpponent = null;
   currentRoomId = null;
   isOnlineGame = false;
@@ -2088,6 +2131,24 @@ function showRules() {
 }
 function hideRules() {
   document.getElementById('rules-modal').classList.remove('active');
+}
+
+// ── HEADER RULES POPUP ────────────────────────────────────────
+function showHeaderRules(rawValue, displayName) {
+  let title, body;
+  if (rawValue && rawValue.startsWith('STAT:')) {
+    title = displayName;
+    body = `For cells along this <strong>${escapeHtml(displayName)}</strong> axis, your player must have hit this milestone <strong>in a single season</strong> while playing for the team on the other axis. If both axes are stats, the player needs to have achieved each one at any point in their career.`;
+  } else {
+    title = displayName;
+    body = `For cells along this row/column, your player must have <strong>played a snap (or appeared on the active roster) for ${escapeHtml(displayName)}</strong>. If the other axis is a stat category, they also need to have hit that stat in a single season while playing for ${escapeHtml(displayName)}.`;
+  }
+  document.getElementById('header-rules-title').textContent = title;
+  document.getElementById('header-rules-body').innerHTML = body;
+  document.getElementById('header-rules-modal').classList.add('active');
+}
+function hideHeaderRules() {
+  document.getElementById('header-rules-modal').classList.remove('active');
 }
 
 // ── BUG REPORT ─────────────────────────────────────────────────
@@ -2254,6 +2315,7 @@ async function handleLogin() {
   try {
     const data = await apiCall('/api/auth/login', 'POST', {username: u, password: p});
     currentUser = data.user;
+    authToken = data.auth_token;
     saveSession();
     updateHeaderUser();
     initSocket();
@@ -2265,10 +2327,12 @@ async function handleRegister() {
   const u = document.getElementById('reg-user').value.trim();
   const p = document.getElementById('reg-pass').value;
   if (!u || !p) return showToast('Username and password required', 'error');
-  if (p.length < 4) return showToast('Password must be at least 4 characters', 'error');
+  if (p.length < 8) return showToast('Password must be at least 8 characters', 'error');
+  if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) return showToast('Password must include both a letter and a number', 'error');
   try {
     const data = await apiCall('/api/auth/register', 'POST', {username: u, password: p});
     currentUser = data.user;
+    authToken = data.auth_token;
     saveSession();
     updateHeaderUser();
     initSocket();
@@ -2280,6 +2344,7 @@ async function handleGuestLogin() {
   try {
     const data = await apiCall('/api/auth/guest', 'POST');
     currentUser = data.user;
+    authToken = data.auth_token;
     updateHeaderUser();
     initSocket();
     showScreen('screen-lobby');
@@ -2642,6 +2707,10 @@ function renderBoard(oldBoard) {
     const hdr = createEl('div', 'grid-header');
     const name = gameState.col_names[c];
     const logo = gameState.col_logos[c];
+    const raw = gameState.cols[c];
+    hdr.style.cursor = 'pointer';
+    hdr.title = 'Tap for rules';
+    hdr.onclick = () => showHeaderRules(raw, name);
     if (logo) {
       const img = document.createElement('img');
       img.src = logo;
@@ -2672,7 +2741,11 @@ function renderBoard(oldBoard) {
   for (let r = 0; r < 3; r++) {
     const rowName = gameState.row_names[r];
     const rowLogo = gameState.row_logos[r];
+    const rowRaw = gameState.rows[r];
     const rowHdr = createEl('div', 'grid-header');
+    rowHdr.style.cursor = 'pointer';
+    rowHdr.title = 'Tap for rules';
+    rowHdr.onclick = () => showHeaderRules(rowRaw, rowName);
     if (rowLogo) {
       const img = document.createElement('img');
       img.src = rowLogo;
@@ -2705,7 +2778,7 @@ function renderBoard(oldBoard) {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = (cellData.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -2788,7 +2861,9 @@ function handleTurnLogic() {
 
 function startTurnTimer() {
   clearTurnTimer();
-  turnTimerSeconds = TURN_TIME_LIMIT;
+  // Sudden death uses a shorter timer
+  const inSuddenDeath = gameState && gameState.double_ttt;
+  turnTimerSeconds = inSuddenDeath ? SUDDEN_DEATH_TIME_LIMIT : TURN_TIME_LIMIT;
   updateTimerDisplay();
   turnTimerInterval = setInterval(() => {
     turnTimerSeconds--;
@@ -2798,7 +2873,7 @@ function startTurnTimer() {
       // Only the active player's screen should auto-pass
       if (isMyTurn()) {
         showToast('Time expired — turn passed', 'error');
-        passTurn();
+        passTurn(true);
       }
     }
   }, 1000);
@@ -2849,12 +2924,12 @@ async function doBotTurn() {
   } catch(e) { botPending = false; /* silently ignore "not bot's turn" errors */ }
 }
 
-async function passTurn() {
+async function passTurn(isTimeout = false) {
   if (!isMyTurn()) { showToast("Wait for your turn", "error"); return; }
   const base = getApiBase();
   try {
-    const res = await apiCall(`${base}/pass`, 'POST', {});
-    showToast(res.message);
+    const res = await apiCall(`${base}/pass`, 'POST', {is_timeout: isTimeout});
+    showToast(res.message, res.result === 'afk_kicked' ? 'error' : 'default');
     disableCellsBriefly();
     updateGameState(res.state);
   } catch(e) {}
@@ -3010,10 +3085,10 @@ function openSearch(idx) {
     const currentTurn = gameState.turn;
     if (cellData.owner_turn === currentTurn) {
       titleEl.textContent = 'Upgrade Cell';
-      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)}) \u2014 Beat this rarity`;
+      contextEl.innerHTML = `Current: <span>${escapeHtml(cellData.player_name)}</span> (${(cellData.rarity * 100).toFixed(1)}) \u2014 Beat this rarity`;
     } else {
       titleEl.textContent = 'Steal Attempt';
-      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${Math.round(cellData.rarity * 100)})`;
+      contextEl.innerHTML = `Beat: <span>${escapeHtml(cellData.player_name)}</span> (${(cellData.rarity * 100).toFixed(1)})`;
     }
   } else {
     titleEl.textContent = 'Select Player';
@@ -3206,7 +3281,7 @@ function buildEndBoard() {
         const nameDiv = createEl('div', 'cell-name');
         nameDiv.textContent = cellData.player_name;
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(cellData.rarity * 100);
+        rarityDiv.textContent = (cellData.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -3275,7 +3350,7 @@ function buildRevealBoard() {
         nameDiv.textContent = answer.name;
         nameDiv.style.color = 'var(--accent-cyan)';
         const rarityDiv = createEl('div', 'cell-rarity');
-        rarityDiv.textContent = Math.round(answer.rarity * 100);
+        rarityDiv.textContent = (answer.rarity * 100).toFixed(1);
         content.appendChild(nameDiv);
         content.appendChild(rarityDiv);
         cell.appendChild(content);
@@ -3307,6 +3382,7 @@ document.addEventListener('keydown', (e) => {
     if (document.getElementById('profile-modal').classList.contains('active')) hideProfile();
     if (document.getElementById('bug-modal') && document.getElementById('bug-modal').classList.contains('active')) hideBugReport();
     if (document.getElementById('admin-modal') && document.getElementById('admin-modal').classList.contains('active')) hideAdminStats();
+    if (document.getElementById('header-rules-modal') && document.getElementById('header-rules-modal').classList.contains('active')) hideHeaderRules();
   }
 });
 
@@ -3340,7 +3416,7 @@ async function loadLeaderboard() {
       const rankClass = i < 3 ? 'lb-rank top-3' : 'lb-rank';
       row.innerHTML = `
         <div class="${rankClass}">${i + 1}</div>
-        <div class="lb-name">${p.username}</div>
+        <div class="lb-name">${escapeHtml(p.username)}</div>
         <div class="lb-wins">${p.wins}</div>
         <div class="lb-stat">${p.losses}</div>
         <div class="lb-stat">${p.win_pct}%</div>
